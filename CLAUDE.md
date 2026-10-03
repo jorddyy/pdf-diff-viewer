@@ -41,7 +41,7 @@ Browser tests (puppeteer-core, no bundled browser):
 ```bash
 npm run e2e -- <url> <out-dir> old.pdf new.pdf            # screenshots + timings
 npm run e2e:comments -- <url> <out-dir> review.md a.pdf b.pdf [...]
-npx tsx scripts/e2e-viewer.ts <url> <out-dir> old.pdf new.pdf       # theme, sync scroll, landscape, selection, panels (PASS/FAIL)
+npx tsx scripts/e2e-viewer.ts <url> <out-dir> old.pdf new.pdf       # theme, sync scroll, list follows, landscape, selection, click-to-reveal, panels (PASS/FAIL)
 npx tsx scripts/e2e-session.ts <url> <out-dir> review.md a.pdf b.pdf # comments done/delete/undo, reload restore, recent list (PASS/FAIL)
 npx tsx scripts/e2e-export.ts <url> <out-dir> old.pdf new.pdf       # writes export-side.pdf / export-annotated.pdf
 # env: BROWSER=firefox, DARK=1 (Chromium), FIGURE="Figure 32", PICK="L477", WAIT=6000, HISTORY=1
@@ -49,6 +49,7 @@ npx tsx scripts/e2e-export.ts <url> <out-dir> old.pdf new.pdf       # writes exp
 
 - `<url>` can be `http://localhost:5173/`, `npx vite preview` (production build over http, like Pages), `file://$PWD/dist/index.html` or the live site.
 - Each puppeteer run starts with a fresh browser profile, so saved comparisons start empty.
+- Stop a background dev server by its port (`ss -ltnp | grep 5199`, then `kill <pid>`). Do not use `pkill -f` or `pgrep -f` with a pattern: it also matches the shell running it and kills that command.
 - Count annotations in exported PDFs with pdf.js (`page.getAnnotations()`); a grep of the file finds nothing because pdf-lib writes object streams.
 - Browsers are the snaps: `/snap/bin/chromium` and `/snap/bin/firefox`. The
   chrome-devtools MCP cannot find Chrome on this machine; use these scripts.
@@ -76,7 +77,7 @@ scripts and tests (`scripts/node-pdf.ts` provides pdf.js legacy build + zlib).
 | Objects | `src/align/objects.ts` | figure/table/equation matching via caption-token votes, then fingerprints, then number, then same-page position; section matching |
 | Figures | `src/figures/compare.ts` | render once per page, crop panels, register (global shift), ink-difference ratio > `CHANGED_THRESHOLD` = changed |
 | Comments | `src/comments/` | `parse.ts` (Markdown → items + refs + snippets), `assign.ts` (round → version), `resolve.ts` (ref → location + status in target), `export.ts` (annotated Markdown) |
-| UI | `src/app.tsx`, `src/ui/*` | Preact. Panes render pages lazily (IntersectionObserver) with a pdf.js `TextLayer` (selectable text, browser find). Marks are drawn under the text layer with `pointer-events: none`; a click on a page hit-tests them. Keys: `t<change>`, `f<figure match>`, `r<renumbered object>`, `c<comment>` |
+| UI | `src/app.tsx`, `src/ui/*` | Preact. Panes render pages lazily (IntersectionObserver) with a pdf.js `TextLayer` (selectable text, browser find). Marks are drawn under the text layer with `pointer-events: none`; a click on a page hit-tests them (`onMarkClick`), switches the sidebar tab and bumps `reveal`, which centres and flashes the entry (`revealEntry`), even if it was already selected. The other way round, user scrolling of the PDFs calls `followRef` with the visible range of the new version; the open list marks entries on screen (`.inview`, `followList`) and scrolls the first one to the top (`scrollToTop`). Only user scrolls trigger it (the sync leader), never navigation. Keys: `t<change>`, `f<figure match>`, `r<renumbered object>`, `c<comment>` |
 | Saved comparisons | `src/pdf/workspaces.ts` | IndexedDB: PDFs by SHA-256 plus a workspace per comparison (pair, filters, zoom, scroll, comments, round overrides, done ticks). Auto-saved (debounced), the newest is restored on load, the start page lists them (max 15) |
 | Export | `src/export/` | `@pdfme/pdf-lib` (maintained pdf-lib fork). `sideBySide.ts`: old/new pages embedded as vector via the stored viewport transform, viewer marks redrawn, summary pages with links. `annotated.ts`: new PDF + Highlight/Caret/Square/Text annotations (viewer coords → user space by inverting the viewport transform). `pairing.ts`: which old page goes next to each new page |
 
@@ -129,7 +130,7 @@ Key decisions (and why):
   heading. Otherwise it is `numeric`; those matter (changed results).
 - **Moves:** an equal run must be ≥ 10 tokens with ≥ 6 real words. Otherwise
   shared formulas like "B0 → D−π+" create false moves.
-- **Number classification** is `classifyPair()` in `align.ts`. Only whole numbers in reference positions are `renumber`; decimals or values inside expressions are always `numeric`. Example: `(1.23 ± 0.04)` → `(1.31 ± 0.05)` must be a number change.
+- **Number classification** is `classifyPair()` in `align.ts`. Only whole numbers or ranges (`Figs. 17–19`) in reference positions are `renumber`; decimals or values inside expressions are always `numeric`. Example: `(1.23 ± 0.04)` → `(1.31 ± 0.05)` must be a number change.
 - **Rotated pages:** orientation comes from `text transform × viewport transform` (`words.ts`). `/Rotate 90` landscape tables are upright on screen but rotated in PDF space.
 - **Table superscripts** attach by their *start* x, with the row growing as pieces join (`lines.ts`). Unanchored text rows count as main rows in numbered documents too, so tables build identically with and without line numbers.
 - **Captions** ending in "." need caption text and a caption font or nearby graphics (`captionStart()`). "Fig. 23." can start a body line after a wrap.

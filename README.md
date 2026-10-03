@@ -36,8 +36,11 @@ Open the page, drop two or more PDFs on it.
 - The change list (left) groups changes by section. Filters: text, numbers
   (only numbers changed, e.g. results), moved text, figures, renumbering
   (hidden by default) and the table of contents (hidden by default).
-- Click a change or a highlight to jump; `j`/`n` and `k`/`p` step through the
-  changes. Scrolling is synchronised between the two versions.
+- Click a change in the list to jump to it in both versions, or click a
+  highlight on a page to find its entry in the list. `j`/`n` and `k`/`p` step
+  through the changes. Scrolling is synchronised between the two versions,
+  and the list on the left scrolls along, marking the entries that are on
+  screen.
 - With more than two versions loaded, pick the pair at the top.
 - **Comments tab:** paste or load the review. Each `## Round …` heading is
   coupled to a version (adjustable). Clicking a comment highlights the cited

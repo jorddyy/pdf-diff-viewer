@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { CommentItem, ParsedComments } from '../comments/parse';
 import type { CommentResolution, RefStatus } from '../comments/resolve';
-import { clickable, revealEntry } from './ChangeList';
+import { clickable, followList, revealEntry, scrollToTop, type Follower } from './ChangeList';
 
 export interface RoundChoice {
   title: string;
@@ -19,6 +19,8 @@ export type History = Map<number, { label: string; status: RefStatus | 'general'
 interface Props {
   /** Set when a comment pin or outline on a page was clicked: show that comment. */
   reveal?: { key: string; n: number } | null;
+  /** Filled in by the panel: called with the visible part of the new version while the user scrolls the PDFs. */
+  follow?: { current: Follower | null };
   text: string;
   setText: (t: string) => void;
   parsed: ParsedComments | null;
@@ -82,6 +84,27 @@ export function CommentsPanel(p: Props) {
   useEffect(() => {
     if (p.reveal?.key.startsWith('c')) revealEntry(listRef.current, p.reveal.key);
   }, [p.reveal, editing]);
+
+  // Scroll along with the PDFs: mark comments whose place is on screen and
+  // bring the first of them to the top. Comments elsewhere stay put.
+  useEffect(() => {
+    if (!p.follow) return;
+    let last = '';
+    const items = p.resolutions.map((r) => {
+      const b = r.refs.find((x) => x.target)?.target?.boxes[0];
+      return { key: `c${r.item.id}`, pos: b ? b.page * 1e4 + b.box[1] : null };
+    });
+    p.follow.current = ({ top, bottom }) => {
+      const first = followList(listRef.current, items, top, bottom);
+      if (first && first !== last) {
+        last = first;
+        scrollToTop(listRef.current, first);
+      }
+    };
+    return () => {
+      if (p.follow) p.follow.current = null;
+    };
+  }, [p.follow, p.resolutions, editing]);
 
   if (editing || !p.parsed) {
     return (

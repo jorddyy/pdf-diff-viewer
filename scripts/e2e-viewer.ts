@@ -69,6 +69,18 @@ for (let i = 0; i < 5; i++) {
 }
 check('scrolling A moves B', after[1] - before[1] > 500, `A ${before[0]}→${after[0]}, B ${before[1]}→${after[1]}`);
 check('no jitter after scrolling stops', samples.every((s) => s[0] === after[0] && s[1] === after[1]), JSON.stringify(samples.map((s) => s.map(Math.round))));
+const follow = await page.evaluate(() => {
+  const list = document.querySelector('.change-list')!;
+  const lr = list.getBoundingClientRect();
+  const inview = [...document.querySelectorAll<HTMLElement>('.chg.inview')];
+  const firstShown = inview[0]?.getBoundingClientRect();
+  return {
+    scroll: Math.round(list.scrollTop),
+    pages: inview.map((e) => e.querySelector('.pages')?.textContent?.trim()),
+    visibleInList: !!firstShown && firstShown.top >= lr.top - 1 && firstShown.top < lr.bottom,
+  };
+});
+check('the change list follows the PDFs', follow.scroll > 0 && follow.pages.length > 0 && follow.visibleInList, `list at ${follow.scroll}px; on screen: ${follow.pages.slice(0, 3).join(' | ')}`);
 await shot('v3-after-scroll');
 
 // Landscape page fits the pane.
@@ -96,8 +108,15 @@ if (sb) {
 } else check('text on a page can be selected', false, 'no text layer span found');
 
 // Text selection in the change list.
-const card = await page.$('.chg:not(.fig) .snip');
-const cb = await card!.boundingBox();
+// A card that is visible in the list (the list follows the PDFs, so not necessarily the first).
+const card = await page.evaluateHandle(() => {
+  const lr = document.querySelector('.change-list')!.getBoundingClientRect();
+  return [...document.querySelectorAll<HTMLElement>('.chg:not(.fig) .snip')].find((e) => {
+    const r = e.getBoundingClientRect();
+    return r.top > lr.top + 5 && r.bottom < lr.bottom - 5 && r.width > 100;
+  });
+});
+const cb = await (card as any).boundingBox();
 const selBefore = await page.$eval('.chg.sel', (e) => e.getAttribute('data-key')).catch(() => null);
 await page.mouse.move(cb!.x + 3, cb!.y + 5);
 await page.mouse.down();

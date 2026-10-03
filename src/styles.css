@@ -1208,3 +1208,16 @@ code {
     background: var(--chip);
   }
 }
+
+/* Entries whose place is on screen in the PDFs */
+.change-list {
+  position: relative;
+}
+
+.chg.inview {
+  box-shadow: inset 3px 0 0 var(--muted);
+}
+
+.chg.inview.sel {
+  box-shadow: none;
+}

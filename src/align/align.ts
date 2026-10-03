@@ -58,8 +58,11 @@ export interface Alignment {
 }
 
 const REF_WORD = /^(fig(ure)?s?|tab(le)?s?|eqs?|equations?|sec(tion)?s?|refs?|app(endix)?|appendices|chapters?|lines?|l)\.?$/i;
-/** Section-like number: "3", "3.2", "A.3", "12a", optionally bracketed or followed by punctuation. */
-const SECTION_NUM = /^[([]?(?:[A-Z]|\d+)(?:\.\d+)*[a-z]?[)\],.;:]*$/;
+/**
+ * Reference-like number: "3", "3.2", "A.3", "12a", or a range "17-19" (dashes
+ * are normalised), optionally bracketed or followed by punctuation.
+ */
+const SECTION_NUM = /^[([]?(?:[A-Z]|\d+)(?:\.\d+)*[a-z]?(?:-(?:[A-Z]\.?)?\d+(?:\.\d+)*[a-z]?)?[)\],.;:]*$/;
 /** Whole number (no decimals), optionally "A." prefixed, bracketed or followed by punctuation. */
 const INT_TOKEN = /^[[(]?(?:[A-Z]\.)?\d+[a-z]?[\])]?[,.;:]?$/;
 /** Citation numbers: "[23]", "[7," and "8]" in "[7, 8]". */

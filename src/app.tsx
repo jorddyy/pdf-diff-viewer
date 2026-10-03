@@ -5,7 +5,7 @@ import { clearCache, getCached, putCached } from './pdf/cache';
 import { alignDocs, type Alignment } from './align/align';
 import type { DocModel } from './extract/types';
 import { PANE_PAD, PaneControl, PdfPane, type InputKind } from './ui/PdfPane';
-import { ChangeList, DEFAULT_FILTERS, FIG_BADGE, badge, changeVisible, entryCategory, type Entry, type Filters } from './ui/ChangeList';
+import { ChangeList, DEFAULT_FILTERS, FIG_BADGE, badge, changeVisible, entryCategory, type Entry, type Filters, type Follower } from './ui/ChangeList';
 import { ExportDialog, type ExportOptions } from './ui/ExportDialog';
 import { buildSideBySide } from './export/sideBySide';
 import { buildAnnotated, textChangeSpecs, type AnnotationSpec } from './export/annotated';
@@ -763,6 +763,7 @@ export function App() {
   // Synchronised scrolling: only the pane the user is actually scrolling leads.
   // The follower's own scroll events are ignored, so the panes never push each other.
   const leader = useRef<{ side: Side | null; until: number; down: boolean }>({ side: null, until: 0, down: false });
+  const followRef = useRef<Follower | null>(null);
   const onUserInput = (side: Side, kind: InputKind) => {
     const now = performance.now();
     if (kind === 'up') leader.current = { side: leader.current.side, until: now + 400, down: false };
@@ -775,11 +776,21 @@ export function App() {
     if (L.side !== side || (!L.down && now > L.until)) return;
     // Smooth-scroll animations continue after the last wheel event.
     L.until = Math.max(L.until, now + 150);
-    if (!sync || !anchors) return;
-    const [from, to] = side === 'a' ? [ctlA, ctlB] : [ctlB, ctlA];
-    const pos = from.centerPos();
-    const target = pos && mapPos(anchors, side, pos);
-    if (target) to.setCenter(target);
+    if (sync && anchors) {
+      const [from, to] = side === 'a' ? [ctlA, ctlB] : [ctlB, ctlA];
+      const pos = from.centerPos();
+      const target = pos && mapPos(anchors, side, pos);
+      if (target) to.setCenter(target);
+    }
+    // The sidebar list follows the part of the new version on screen.
+    let range = side === 'b' || (sync && anchors) ? ctlB.viewRange() : null;
+    if (!range && anchors) {
+      const r = ctlA.viewRange();
+      const t = r && mapPos(anchors, 'a', r.top);
+      const b = r && mapPos(anchors, 'a', r.bottom);
+      range = t && b ? { top: t, bottom: b } : null;
+    }
+    if (range) followRef.current?.({ top: range.top.page * 1e4 + range.top.y, bottom: range.bottom.page * 1e4 + range.bottom.y });
   };
 
   // Keyboard: j/n next change, k/p previous.
@@ -1044,6 +1055,7 @@ export function App() {
             {tab === 'comments' ? (
               <CommentsPanel
                 reveal={reveal}
+                follow={followRef}
                 text={commentText}
                 setText={(t) => {
                   setCommentText(t);
@@ -1097,6 +1109,7 @@ export function App() {
                   selected={selected}
                   onSelect={select}
                   reveal={reveal}
+                  follow={followRef}
                   onCompare={openCompare}
                   note={figs.some((m) => statusOf(m) === 'pending') ? 'Comparing figures in the background…' : undefined}
                 />

@@ -43,12 +43,22 @@ export class PaneControl {
     el.scrollTop = Math.max(0, this.tops[pos.page] + pos.y * this.scaleOf(pos.page) - el.clientHeight / 2);
   }
 
+  /** Page position at a vertical offset (px) in the scrolled content. */
+  posAt(px: number): Pos {
+    let i = 0;
+    while (i + 1 < this.tops.length && this.tops[i + 1] <= px) i++;
+    return { page: i, y: (px - (this.tops[i] ?? 0)) / this.scaleOf(i) };
+  }
+
   centerPos(): Pos | null {
     if (!this.el || !this.tops.length) return null;
-    const c = this.el.scrollTop + this.el.clientHeight / 2;
-    let i = 0;
-    while (i + 1 < this.tops.length && this.tops[i + 1] <= c) i++;
-    return { page: i, y: (c - this.tops[i]) / this.scaleOf(i) };
+    return this.posAt(this.el.scrollTop + this.el.clientHeight / 2);
+  }
+
+  /** Page positions at the top and bottom of the visible area. */
+  viewRange(): { top: Pos; bottom: Pos } | null {
+    if (!this.el || !this.tops.length) return null;
+    return { top: this.posAt(this.el.scrollTop), bottom: this.posAt(this.el.scrollTop + this.el.clientHeight) };
   }
 }
 

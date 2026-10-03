@@ -88,11 +88,13 @@ interface Props {
   onSelect: (key: string) => void;
   /** Set when a highlight on a page was clicked: show that entry. */
   reveal?: { key: string; n: number } | null;
+  /** Filled in by the list: called with the visible part of the new version while the user scrolls the PDFs. */
+  follow?: { current: Follower | null };
   onCompare: (matchId: number) => void;
   note?: string;
 }
 
-export function ChangeList({ entries, filters, setFilters, selected, onSelect, reveal, onCompare, note }: Props) {
+export function ChangeList({ entries, filters, setFilters, selected, onSelect, reveal, follow, onCompare, note }: Props) {
   const listRef = useRef<HTMLDivElement>(null);
   const counts: Record<keyof Filters, number> = { text: 0, numeric: 0, moved: 0, figures: 0, renumber: 0, toc: 0 };
   for (const e of entries) counts[entryCategory(e)]++;
@@ -106,6 +108,24 @@ export function ChangeList({ entries, filters, setFilters, selected, onSelect, r
   useEffect(() => {
     if (reveal) revealEntry(listRef.current, reveal.key);
   }, [reveal]);
+
+  // Scroll along with the PDFs: mark the entries on screen and keep the first
+  // change at the current position at the top of the list.
+  useEffect(() => {
+    if (!follow) return;
+    let last = '';
+    follow.current = ({ top, bottom }) => {
+      const first = followList(listRef.current, visible.map((e) => ({ key: e.key, pos: e.pos })), top, bottom);
+      const target = first ?? visible.find((e) => e.pos >= top)?.key ?? null;
+      if (target && target !== last) {
+        last = target;
+        scrollToTop(listRef.current, target);
+      }
+    };
+    return () => {
+      follow.current = null;
+    };
+  }, [follow, visible]);
 
   let lastSection = '\u0000';
   return (
@@ -237,4 +257,29 @@ export function revealEntry(list: HTMLElement | null, key: string): void {
   el.classList.remove('flash');
   void el.offsetWidth; // restart the animation
   el.classList.add('flash');
+}
+
+/** Called with the visible range of the new version as positions (page × 10⁴ + y). */
+export type Follower = (range: { top: number; bottom: number }) => void;
+
+/** Mark entries whose position is on screen; returns the first of them (list order). */
+export function followList(list: HTMLElement | null, items: { key: string; pos: number | null }[], top: number, bottom: number): string | null {
+  if (!list) return null;
+  const els = new Map<string, HTMLElement>();
+  for (const el of list.querySelectorAll<HTMLElement>('[data-key]')) els.set(el.dataset.key!, el);
+  let first: string | null = null;
+  for (const it of items) {
+    const inView = it.pos !== null && it.pos >= top && it.pos <= bottom;
+    els.get(it.key)?.classList.toggle('inview', inView);
+    if (inView && first === null) first = it.key;
+  }
+  return first;
+}
+
+/** Scroll a list so that an entry (and its section heading) is at the top. */
+export function scrollToTop(list: HTMLElement | null, key: string): void {
+  const el = list?.querySelector<HTMLElement>(`[data-key="${key}"]`);
+  if (!list || !el) return;
+  const head = el.previousElementSibling?.classList.contains('sec') ? (el.previousElementSibling as HTMLElement) : el;
+  list.scrollTop = head.offsetTop - 4;
 }

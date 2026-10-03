@@ -11,10 +11,13 @@ describe('classifyPair', () => {
     expect(c('(12', '(15', '=')).toBe('numeric');
     expect(c('4.2%.', '4.7%.', 'is')).toBe('numeric');
     expect(c('1234', '1250', 'yield')).toBe('numeric');
+    expect(c('5-10', '5-12', 'between')).toBe('numeric');
   });
 
   it('reports reference numbers as renumbering', () => {
     expect(c('12', '14', 'Fig.')).toBe('renumber');
+    expect(c('17-19.', '19-21.', 'Figs.')).toBe('renumber');
+    expect(c('12-15,', '14-17,', 'Figs.')).toBe('renumber');
     expect(c('3.2', '4.2', 'Section')).toBe('renumber');
     expect(c('(13)', '(15)', 'Eq.')).toBe('renumber');
     expect(c('[23]', '[24]', 'in')).toBe('renumber');
