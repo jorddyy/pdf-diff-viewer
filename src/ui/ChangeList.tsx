@@ -209,15 +209,23 @@ export function ChangeList({ entries, filters, setFilters, selected, onSelect, r
                     p.{c.aPage + 1} → p.{c.bPage + 1}
                   </span>
                 </div>
-                {c.kind !== 'insert' && (
-                  <div class="snip old">
-                    <Segs segs={c.aSegs} cls="del" />
+                {c.kind === 'moved' && c.move ? (
+                  <div class="snip">
+                    <span class="moved-text">“{c.move.first} …”</span> ({c.move.words} words) now follows “… {c.move.afterB}”; it used to follow “… {c.move.afterA}”.
                   </div>
-                )}
-                {c.kind !== 'delete' && (
-                  <div class="snip new">
-                    <Segs segs={c.bSegs} cls="ins" />
-                  </div>
+                ) : (
+                  <>
+                    {c.kind !== 'insert' && (
+                      <div class="snip old">
+                        <Segs segs={c.aSegs} cls="del" />
+                      </div>
+                    )}
+                    {c.kind !== 'delete' && (
+                      <div class="snip new">
+                        <Segs segs={c.bSegs} cls="ins" />
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </>

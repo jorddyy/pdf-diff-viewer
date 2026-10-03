@@ -41,6 +41,11 @@ Open the page, drop two or more PDFs on it.
   through the changes. Scrolling is synchronised between the two versions,
   and the list on the left scrolls along, marking the entries that are on
   screen.
+- The page box in each pane header shows the current page; type a number and
+  Enter to go there (`g` jumps to the box).
+- Moved text (a paragraph that now sits elsewhere) is underlined in purple and
+  listed once. Figures and tables that LaTeX merely placed differently are not
+  reported as moved.
 - With more than two versions loaded, pick the pair at the top.
 - **Comments tab:** paste or load the review. Each `## Round …` heading is
   coupled to a version (adjustable). Clicking a comment highlights the cited

@@ -38,6 +38,8 @@ const MODES: [Mode, string][] = [
 export function CompareModal({ req, onClose }: { req: CompareRequest; onClose: () => void }) {
   const [mode, setMode] = useState<Mode>('side');
   const [showSame, setShowSame] = useState(false);
+  // Blink, difference and swipe need both versions of a panel.
+  const comparable = req.pairs.some((p) => p.a && p.b);
   // Changed, new and removed panels first; unchanged panels only on request.
   const order = { changed: 0, new: 1, removed: 2, pending: 3, same: 4 } as const;
   const sorted = [...req.pairs].sort((x, y) => order[x.status ?? 'changed'] - order[y.status ?? 'changed']);
@@ -48,24 +50,24 @@ export function CompareModal({ req, onClose }: { req: CompareRequest; onClose: (
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
       const i = ['1', '2', '3', '4'].indexOf(e.key);
-      if (i >= 0) setMode(MODES[i][0]);
+      if (i >= 0 && comparable) setMode(MODES[i][0]);
     };
     window.addEventListener('keydown', onKey);
     dialog.current?.focus();
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, comparable]);
   return (
     <div class="modal-back" onClick={onClose}>
       <div class="modal" role="dialog" aria-label={req.title} tabIndex={-1} ref={dialog} onClick={(e) => e.stopPropagation()}>
         <div class="modal-head">
           <strong>{req.title}</strong>
-          <div class="modes" role="tablist">
+          {comparable && <div class="modes" role="tablist">
             {MODES.map(([m, label], i) => (
               <button key={m} role="tab" aria-selected={mode === m} class={`chip ${mode === m ? 'on' : ''}`} title={`${label} (${i + 1})`} onClick={() => setMode(m)}>
                 {label}
               </button>
             ))}
-          </div>
+          </div>}
           <button class="btn icon" title="Close (Esc)" onClick={onClose}>
             ×
           </button>

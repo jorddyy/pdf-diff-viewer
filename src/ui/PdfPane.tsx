@@ -13,6 +13,18 @@ export class PaneControl {
   el: HTMLDivElement | null = null;
   scales: number[] = [];
   tops: number[] = [];
+  /** Called (once per frame) when the pane scrolls, e.g. to update the page box. */
+  listeners = new Set<() => void>();
+
+  notify(): void {
+    for (const f of this.listeners) f();
+  }
+
+  /** Put the top of a page at the top of the pane. */
+  scrollToPage(page: number): void {
+    if (!this.el || this.tops[page] === undefined) return;
+    this.el.scrollTop = Math.max(0, this.tops[page] - 8);
+  }
 
   scaleOf(page: number): number {
     return this.scales[page] ?? 1;
@@ -109,7 +121,10 @@ export function PdfPane({ pdf, pages, scale, maxWidth, marks, selected, control,
       }}
       onScroll={() => {
         cancelAnimationFrame(frame.current);
-        frame.current = requestAnimationFrame(onScroll);
+        frame.current = requestAnimationFrame(() => {
+          control.notify();
+          onScroll();
+        });
       }}
       onWheel={() => onUserInput('scroll')}
       onPointerDown={() => onUserInput('down')}
@@ -276,5 +291,53 @@ function PageView({ pdf, index, width, height, scale, marks, selected, onMarkCli
       <div class="textLayer" ref={textRef} />
       <div class="pno">{index + 1}</div>
     </div>
+  );
+}
+
+/** "12 / 153": the page in the middle of the pane; type a number and Enter to go there. */
+export function PageBox({ control, numPages, onGo }: { control: PaneControl; numPages: number; onGo: (page: number) => void }) {
+  const [page, setPage] = useState(1);
+  const [text, setText] = useState<string | null>(null);
+  useEffect(() => {
+    const update = () => setPage((control.centerPos()?.page ?? 0) + 1);
+    control.listeners.add(update);
+    update();
+    return () => {
+      control.listeners.delete(update);
+    };
+  }, [control]);
+  const go = () => {
+    const n = parseInt(text ?? '', 10);
+    if (n >= 1 && n <= numPages) onGo(n - 1);
+    setText(null);
+  };
+  return (
+    <span class="pagebox">
+      <input
+        type="text"
+        inputMode="numeric"
+        aria-label="Go to page"
+        title="Go to page (g)"
+        value={text ?? String(page)}
+        size={Math.max(2, String(numPages).length)}
+        onFocus={(e) => {
+          const input = e.currentTarget;
+          setText(String(page));
+          requestAnimationFrame(() => input.select());
+        }}
+        onInput={(e) => setText(e.currentTarget.value.replace(/[^0-9]/g, ''))}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            go();
+            (e.currentTarget as HTMLInputElement).blur();
+          } else if (e.key === 'Escape') {
+            setText(null);
+            (e.currentTarget as HTMLInputElement).blur();
+          }
+        }}
+        onBlur={() => setText(null)}
+      />
+      <span class="small"> / {numPages}</span>
+    </span>
   );
 }

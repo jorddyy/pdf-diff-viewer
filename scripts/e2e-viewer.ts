@@ -159,6 +159,40 @@ for (const attempt of [1, 2]) {
   check(`clicking a highlight reveals its entry (${attempt})`, !!pos && pos.rel > 0.2 && pos.rel < 0.8, pos ? `entry at ${(100 * pos.rel).toFixed(0)}% of the list` : 'no selected entry');
 }
 
+// Go to page: type a page number in the new version's page box.
+await page.evaluate(() => window.getSelection()?.removeAllRanges());
+const boxes = await page.$$('.pagebox input');
+await boxes[1].click();
+await page.keyboard.type('50');
+await page.keyboard.press('Enter');
+await sleep(800);
+const shown = await page.$$eval('.pagebox input', (es) => es.map((e) => +(e as HTMLInputElement).value));
+const visible50 = await page.evaluate(() => {
+  const pane = document.querySelectorAll<HTMLElement>('.pane')[1];
+  const pg = pane.querySelectorAll<HTMLElement>('.page')[49].getBoundingClientRect();
+  const pr = pane.getBoundingClientRect();
+  return pg.top < pr.bottom && pg.bottom > pr.top;
+});
+check('go to page jumps there and the other side follows', visible50 && shown[1] >= 50 && shown[1] <= 51 && shown[0] > 30, `boxes show ${shown.join(' / ')}`);
+await page.keyboard.press('g');
+const focused = await page.evaluate(() => document.activeElement?.closest('.pagebox') !== null && document.activeElement === document.querySelectorAll('.pagebox input')[1]);
+check('the g key focuses the page box', focused);
+await page.keyboard.press('Escape');
+
+// A figure that exists in one version only: no blink/difference/swipe.
+const addedOpened = await page.evaluate(() => {
+  const entry = [...document.querySelectorAll('.chg.fig')].find((e) => e.textContent?.includes('Figure added'));
+  (entry?.querySelector('.link') as HTMLElement | null)?.click();
+  return !!entry;
+});
+if (addedOpened) {
+  await page.waitForSelector('.pair-view', { timeout: 30_000 });
+  await sleep(800);
+  check('no comparison modes for a figure in one version only', (await page.$$('.modal .modes')).length === 0);
+  await page.keyboard.press('Escape');
+  await sleep(300);
+}
+
 // Figure panels: open a changed figure from the list and check panel states.
 const opened = await page.evaluate(() => {
   const entry = [...document.querySelectorAll('.chg.fig')].find((e) => e.textContent?.includes('Figure changed'));

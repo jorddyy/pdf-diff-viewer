@@ -382,8 +382,11 @@ select {
   background: var(--num);
 }
 
+/* Moved, unchanged text: a light tint and dotted underline, not a full highlight. */
 .mk.mv {
-  background: var(--mv);
+  background: rgb(124 58 237 / 0.07);
+  border-bottom: 2px dotted var(--mv-strong);
+  border-radius: 0;
 }
 
 .mk.ren,
@@ -1220,4 +1223,25 @@ code {
 
 .chg.inview.sel {
   box-shadow: none;
+}
+
+.moved-text {
+  color: var(--text);
+  font-style: italic;
+}
+
+.pagebox {
+  white-space: nowrap;
+}
+
+.pagebox input {
+  font: inherit;
+  font-size: 12px;
+  text-align: right;
+  width: auto;
+  padding: 0 3px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
 }

@@ -39,6 +39,8 @@ export function buildSyncMap(A: DocModel, B: DocModel, al: Alignment): SyncMap {
     lastLine = ta.line;
     const la = A.lines[ta.line];
     const lb = B.lines[al.tokensB[al.aToB[t]].line];
+    // Floats sit wherever LaTeX put them; only running text says where we are.
+    if (la.kind === 'caption' || la.kind === 'table') continue;
     pairs.push([cumA[la.page] + la.box[1], cumB[lb.page] + lb.box[1]]);
   }
   pairs.sort((x, y) => x[0] - y[0]);

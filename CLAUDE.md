@@ -41,7 +41,7 @@ Browser tests (puppeteer-core, no bundled browser):
 ```bash
 npm run e2e -- <url> <out-dir> old.pdf new.pdf            # screenshots + timings
 npm run e2e:comments -- <url> <out-dir> review.md a.pdf b.pdf [...]
-npx tsx scripts/e2e-viewer.ts <url> <out-dir> old.pdf new.pdf       # theme, sync scroll, list follows, landscape, selection, click-to-reveal, panels (PASS/FAIL)
+npx tsx scripts/e2e-viewer.ts <url> <out-dir> old.pdf new.pdf       # theme, sync scroll, list follows, landscape, selection, click-to-reveal, go to page, panels (PASS/FAIL)
 npx tsx scripts/e2e-session.ts <url> <out-dir> review.md a.pdf b.pdf # comments done/delete/undo, reload restore, recent list (PASS/FAIL)
 npx tsx scripts/e2e-export.ts <url> <out-dir> old.pdf new.pdf       # writes export-side.pdf / export-annotated.pdf
 # env: BROWSER=firefox, DARK=1 (Chromium), FIGURE="Figure 32", PICK="L477", WAIT=6000, HISTORY=1
@@ -73,11 +73,11 @@ scripts and tests (`scripts/node-pdf.ts` provides pdf.js legacy build + zlib).
 | Document | `src/extract/document.ts` | orchestrates the above into `DocModel` (`src/extract/types.ts`) |
 | Tokens | `src/align/tokens.ts` | reading-order words, hyphenation undone, thin-space digit groups merged (`497 052` = `497052`) |
 | Diff | `src/align/diff.ts` | unique 4-shingle anchors (LIS) + exact LCS in gaps (≤ `MAX_CELLS`), recursive unique-token anchors for big gaps |
-| Changes | `src/align/align.ts` | moved blocks, grouping (bridges ≤ 3 equal tokens), classes `text`/`numeric`/`renumber`/`toc`, snippets for the list |
+| Changes | `src/align/align.ts` | Running text and floats (captions, table contents) are separate streams: floats are paired by content (`pairFloats`) and aligned pair by pair, so LaTeX float placement never shows as a move. Moved blocks (running text only) are merged (`mergeMoves`) and refined, carrying `move` info for the list. Grouping (bridges ≤ 3 equal tokens), classes `text`/`numeric`/`renumber`/`toc`, snippets for the list |
 | Objects | `src/align/objects.ts` | figure/table/equation matching via caption-token votes, then fingerprints, then number, then same-page position; section matching |
 | Figures | `src/figures/compare.ts` | render once per page, crop panels, register (global shift), ink-difference ratio > `CHANGED_THRESHOLD` = changed |
 | Comments | `src/comments/` | `parse.ts` (Markdown → items + refs + snippets), `assign.ts` (round → version), `resolve.ts` (ref → location + status in target), `export.ts` (annotated Markdown) |
-| UI | `src/app.tsx`, `src/ui/*` | Preact. Panes render pages lazily (IntersectionObserver) with a pdf.js `TextLayer` (selectable text, browser find). Marks are drawn under the text layer with `pointer-events: none`; a click on a page hit-tests them (`onMarkClick`), switches the sidebar tab and bumps `reveal`, which centres and flashes the entry (`revealEntry`), even if it was already selected. The other way round, user scrolling of the PDFs calls `followRef` with the visible range of the new version; the open list marks entries on screen (`.inview`, `followList`) and scrolls the first one to the top (`scrollToTop`). Only user scrolls trigger it (the sync leader), never navigation. Keys: `t<change>`, `f<figure match>`, `r<renumbered object>`, `c<comment>` |
+| UI | `src/app.tsx`, `src/ui/*` | Preact. Each pane header has a `PageBox` (current page, type a number to jump; `g` focuses it; `PaneControl.listeners` update it on scroll). The compare dialog hides blink/difference/swipe when no panel exists in both versions. Panes render pages lazily (IntersectionObserver) with a pdf.js `TextLayer` (selectable text, browser find). Marks are drawn under the text layer with `pointer-events: none`; a click on a page hit-tests them (`onMarkClick`), switches the sidebar tab and bumps `reveal`, which centres and flashes the entry (`revealEntry`), even if it was already selected. The other way round, user scrolling of the PDFs calls `followRef` with the visible range of the new version; the open list marks entries on screen (`.inview`, `followList`) and scrolls the first one to the top (`scrollToTop`). Only user scrolls trigger it (the sync leader), never navigation. Keys: `t<change>`, `f<figure match>`, `r<renumbered object>`, `c<comment>` |
 | Saved comparisons | `src/pdf/workspaces.ts` | IndexedDB: PDFs by SHA-256 plus a workspace per comparison (pair, filters, zoom, scroll, comments, round overrides, done ticks). Auto-saved (debounced), the newest is restored on load, the start page lists them (max 15) |
 | Export | `src/export/` | `@pdfme/pdf-lib` (maintained pdf-lib fork). `sideBySide.ts`: old/new pages embedded as vector via the stored viewport transform, viewer marks redrawn, summary pages with links. `annotated.ts`: new PDF + Highlight/Caret/Square/Text annotations (viewer coords → user space by inverting the viewport transform). `pairing.ts`: which old page goes next to each new page |
 
@@ -129,7 +129,12 @@ Key decisions (and why):
   Fig./Table/Eq./Sec./Ref., bracketed (`[23]`, `(13)`), or the first word of a
   heading. Otherwise it is `numeric`; those matter (changed results).
 - **Moves:** an equal run must be ≥ 10 tokens with ≥ 6 real words. Otherwise
-  shared formulas like "B0 → D−π+" create false moves.
+  shared formulas like "B0 → D−π+" create false moves. Pieces of one block are
+  merged. Inside a block, leftover words are re-aligned, and one- or two-word
+  coincidental pairings with text outside the block are freed and only kept
+  if nothing better is found. A real reorder (e.g. two groups of paragraphs
+  swapped) is reported once, for the smaller group.
+- **Floats are not running text.** Caption and table lines (with a figure or table object) are aligned only against their paired float. Sync-scroll anchors skip them too.
 - **Number classification** is `classifyPair()` in `align.ts`. Only whole numbers or ranges (`Figs. 17–19`) in reference positions are `renumber`; decimals or values inside expressions are always `numeric`. Example: `(1.23 ± 0.04)` → `(1.31 ± 0.05)` must be a number change.
 - **Rotated pages:** orientation comes from `text transform × viewport transform` (`words.ts`). `/Rotate 90` landscape tables are upright on screen but rotated in PDF space.
 - **Table superscripts** attach by their *start* x, with the row growing as pieces join (`lines.ts`). Unanchored text rows count as main rows in numbered documents too, so tables build identically with and without line numbers.

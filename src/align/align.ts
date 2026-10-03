@@ -33,6 +33,8 @@ export interface Change {
   label: string;
   aSegs: Segment[];
   bSegs: Segment[];
+  /** For moved blocks: size, opening words and what precedes the block in each version. */
+  move?: { words: number; first: string; afterA: string; afterB: string };
 }
 
 export const enum TokState {
@@ -92,70 +94,206 @@ export function classifyPair(x: string, y: string, prev: string[], headingFirst:
   return 'numeric';
 }
 
+/**
+ * Captions and table contents are floats: LaTeX may place them elsewhere in
+ * a new version without anything changing. They are aligned float by float
+ * (paired by content), never as part of the running text, so they cannot be
+ * reported as moved.
+ */
+function isFloatLine(doc: DocModel, lineId: number): boolean {
+  const l = doc.lines[lineId];
+  if (l.kind !== 'caption' && l.kind !== 'table') return false;
+  const o = l.object >= 0 ? doc.objects[l.object] : null;
+  return !!o && o.kind !== 'equation';
+}
+
+interface Segment2 {
+  a: number[];
+  b: number[];
+  sa: Int32Array;
+  sb: Int32Array;
+  ops: Op[];
+}
+
 export function alignDocs(A: DocModel, B: DocModel): Alignment {
   const tokensA = tokenize(A);
   const tokensB = tokenize(B);
   const [ia, ib] = intern(tokensA, tokensB);
-  const ops = diffSeq(ia, ib);
-
   const aToB = new Int32Array(tokensA.length).fill(-1);
   const bToA = new Int32Array(tokensB.length).fill(-1);
   const aState = new Uint8Array(tokensA.length).fill(TokState.Changed);
   const bState = new Uint8Array(tokensB.length).fill(TokState.Changed);
-  for (const op of ops) {
-    if (op.type !== 'equal') continue;
-    for (let k = 0; k < op.a1 - op.a0; k++) {
-      aToB[op.a0 + k] = op.b0 + k;
-      bToA[op.b0 + k] = op.a0 + k;
-      aState[op.a0 + k] = TokState.Equal;
-      bState[op.b0 + k] = TokState.Equal;
-    }
-  }
 
-  const moves = detectMoves(ops, ia, ib, tokensA, aToB, bToA, aState, bState);
+  // Split into the running text and one stream per float.
+  const split = (doc: DocModel, tokens: Token[]) => {
+    const body: number[] = [];
+    const floats = new Map<number, number[]>();
+    tokens.forEach((t, i) => {
+      if (!isFloatLine(doc, t.line)) body.push(i);
+      else {
+        const o = doc.lines[t.line].object;
+        if (!floats.has(o)) floats.set(o, []);
+        floats.get(o)!.push(i);
+      }
+    });
+    return { body, floats };
+  };
+  const sA = split(A, tokensA);
+  const sB = split(B, tokensB);
+
+  const run = (a: number[], b: number[]): Segment2 => {
+    const sa = Int32Array.from(a, (i) => ia[i]);
+    const sb = Int32Array.from(b, (i) => ib[i]);
+    const ops = diffSeq(sa, sb);
+    for (const op of ops) {
+      if (op.type !== 'equal') continue;
+      for (let k = 0; k < op.a1 - op.a0; k++) {
+        const ta = a[op.a0 + k];
+        const tb = b[op.b0 + k];
+        aToB[ta] = tb;
+        bToA[tb] = ta;
+        aState[ta] = TokState.Equal;
+        bState[tb] = TokState.Equal;
+      }
+    }
+    return { a, b, sa, sb, ops };
+  };
+
+  const body = run(sA.body, sB.body);
+  const moves = mergeMoves(detectMoves(body, tokensA, aToB, bToA, aState, bState));
+  // Inside a moved block, leftover pieces that also occur in its new place belong to the move.
+  const runLen = (map: Int32Array, t: number) => {
+    let n = 1;
+    for (let k = 1; t - k >= 0 && map[t - k] >= 0 && map[t - k] === map[t] - k; k++) n++;
+    for (let k = 1; t + k < map.length && map[t + k] >= 0 && map[t + k] === map[t] + k; k++) n++;
+    return n;
+  };
+  for (const mv of moves) {
+    const lastA = mv.a[mv.a.length - 1];
+    const lastB = mv.b[mv.b.length - 1];
+    // Common words inside the block that the plain diff paired with text
+    // outside it (one or two in a row) are coincidences: try them here first.
+    const freed: [number, number][] = [];
+    for (const t of sA.body) {
+      if (t < mv.a[0] || t > lastA || aState[t] !== TokState.Equal) continue;
+      if ((aToB[t] < mv.b[0] || aToB[t] > lastB) && runLen(aToB, t) <= 2) freed.push([t, aToB[t]]);
+    }
+    for (const t of sB.body) {
+      if (t < mv.b[0] || t > lastB || bState[t] !== TokState.Equal) continue;
+      if ((bToA[t] < mv.a[0] || bToA[t] > lastA) && runLen(bToA, t) <= 2) freed.push([bToA[t], t]);
+    }
+    for (const [ta, tb] of freed) {
+      aToB[ta] = -1;
+      bToA[tb] = -1;
+      aState[ta] = TokState.Changed;
+      bState[tb] = TokState.Changed;
+    }
+    const inA = sA.body.filter((t) => t >= mv.a[0] && t <= lastA && aState[t] !== TokState.Equal);
+    const inB = sB.body.filter((t) => t >= mv.b[0] && t <= lastB && bState[t] !== TokState.Equal);
+    for (const op of diffSeq(Int32Array.from(inA, (t) => ia[t]), Int32Array.from(inB, (t) => ib[t]))) {
+      if (op.type !== 'equal') continue;
+      for (let k = 0; k < op.a1 - op.a0; k++) {
+        const ta = inA[op.a0 + k];
+        const tb = inB[op.b0 + k];
+        if (aState[ta] !== TokState.Changed || bState[tb] !== TokState.Changed) continue;
+        aToB[ta] = tb;
+        bToA[tb] = ta;
+        aState[ta] = TokState.Moved;
+        bState[tb] = TokState.Moved;
+        mv.a.push(ta);
+        mv.b.push(tb);
+      }
+    }
+    // Restore the freed pairs that found no better partner.
+    for (const [ta, tb] of freed) {
+      if (aState[ta] !== TokState.Changed || bState[tb] !== TokState.Changed) continue;
+      aToB[ta] = tb;
+      bToA[tb] = ta;
+      aState[ta] = TokState.Equal;
+      bState[tb] = TokState.Equal;
+    }
+    mv.a.sort((x, y) => x - y);
+    mv.b.sort((x, y) => x - y);
+  }
+  const segs: Segment2[] = [body];
+  const pairedA = new Set<number>();
+  const pairedB = new Set<number>();
+  for (const [x, y] of pairFloats(A, B, tokensA, tokensB, sA.floats, sB.floats)) {
+    segs.push(run(sA.floats.get(x)!, sB.floats.get(y)!));
+    pairedA.add(x);
+    pairedB.add(y);
+  }
+  for (const [x, t] of sA.floats) if (!pairedA.has(x)) segs.push(run(t, []));
+  for (const [y, t] of sB.floats) if (!pairedB.has(y)) segs.push(run([], t));
+
+  // Where a float without partner would sit in the other version: after the
+  // counterpart of the closest preceding mapped token.
+  const placeInB = (ta: number) => {
+    for (let t = ta - 1; t >= 0; t--) if (aToB[t] >= 0) return aToB[t] + 1;
+    return 0;
+  };
+  const placeInA = (tb: number) => {
+    for (let t = tb - 1; t >= 0; t--) if (bToA[t] >= 0) return bToA[t] + 1;
+    return 0;
+  };
 
   const aChange = new Int32Array(tokensA.length).fill(-1);
   const bChange = new Int32Array(tokensB.length).fill(-1);
   const changes: Change[] = [];
   const ctx = { A, B, tokensA, tokensB, aState, bState };
 
-  // Group changed tokens, bridging short equal stretches, in document order.
-  let groupA: number[] = [];
-  let groupB: number[] = [];
-  let bridge = 0;
-  let lastA = 0;
-  let lastB = 0;
-  const flush = () => {
-    if (groupA.length || groupB.length) {
-      const c = buildChange(ctx, changes.length, groupA, groupB, lastA, lastB);
-      for (const t of groupA) aChange[t] = c.id;
-      for (const t of groupB) bChange[t] = c.id;
-      changes.push(c);
+  // Group changed tokens of each stream, bridging short equal stretches.
+  for (const seg of segs) {
+    const gA = (k: number) => (k < seg.a.length ? seg.a[k] : seg.a.length ? seg.a[seg.a.length - 1] + 1 : placeInA(seg.b[0] ?? 0));
+    const gB = (k: number) => (k < seg.b.length ? seg.b[k] : seg.b.length ? seg.b[seg.b.length - 1] + 1 : placeInB(seg.a[0] ?? 0));
+    let groupA: number[] = [];
+    let groupB: number[] = [];
+    let bridge = 0;
+    let lastA = gA(0);
+    let lastB = gB(0);
+    const flush = () => {
+      if (groupA.length || groupB.length) {
+        const c = buildChange(ctx, changes.length, groupA, groupB, lastA, lastB);
+        for (const t of groupA) aChange[t] = c.id;
+        for (const t of groupB) bChange[t] = c.id;
+        changes.push(c);
+      }
+      groupA = [];
+      groupB = [];
+      bridge = 0;
+    };
+    for (const op of seg.ops) {
+      if (op.type === 'equal') {
+        bridge += op.a1 - op.a0;
+        if (bridge > 3) flush();
+        lastA = gA(op.a1);
+        lastB = gB(op.b1);
+        continue;
+      }
+      for (let k = op.a0; k < op.a1; k++) if (aState[seg.a[k]] === TokState.Changed) groupA.push(seg.a[k]);
+      for (let k = op.b0; k < op.b1; k++) if (bState[seg.b[k]] === TokState.Changed) groupB.push(seg.b[k]);
+      if (op.a1 > op.a0 || op.b1 > op.b0) bridge = 0;
+      lastA = gA(op.a1);
+      lastB = gB(op.b1);
     }
-    groupA = [];
-    groupB = [];
-    bridge = 0;
-  };
-  for (const op of ops) {
-    if (op.type === 'equal') {
-      bridge += op.a1 - op.a0;
-      if (bridge > 3) flush();
-      lastA = op.a1;
-      lastB = op.b1;
-      continue;
-    }
-    for (let t = op.a0; t < op.a1; t++) if (aState[t] === TokState.Changed) groupA.push(t);
-    for (let t = op.b0; t < op.b1; t++) if (bState[t] === TokState.Changed) groupB.push(t);
-    if (op.a1 > op.a0 || op.b1 > op.b0) bridge = 0;
-    lastA = op.a1;
-    lastB = op.b1;
+    flush();
   }
-  flush();
 
+  const text = (doc: DocModel, tokens: Token[], from: number, to: number) =>
+    tokens
+      .slice(Math.max(0, from), Math.max(0, to))
+      .map((t) => t.words.map((w) => doc.words[w].text).join(''))
+      .join(' ');
   for (const mv of moves) {
     const c = buildChange(ctx, changes.length, mv.a, mv.b, mv.a[0], mv.b[0]);
     c.kind = 'moved';
     c.cls = c.cls === 'toc' ? 'toc' : 'text';
+    c.move = {
+      words: mv.a.length,
+      first: text(A, tokensA, mv.a[0], mv.a[0] + 10),
+      afterA: text(A, tokensA, mv.a[0] - 6, mv.a[0]),
+      afterB: text(B, tokensB, mv.b[0] - 6, mv.b[0]),
+    };
     for (const t of mv.a) aChange[t] = c.id;
     for (const t of mv.b) bChange[t] = c.id;
     changes.push(c);
@@ -173,22 +311,72 @@ export function alignDocs(A: DocModel, B: DocModel): Alignment {
   return { aLabel: A.label, bLabel: B.label, tokensA, tokensB, aToB, bToA, aState, bState, aChange, bChange, changes };
 }
 
+/**
+ * Pair the floats of two versions by content (shared words, identical
+ * figure graphics), preferring the same relative position and number.
+ */
+function pairFloats(A: DocModel, B: DocModel, tokensA: Token[], tokensB: Token[], fa: Map<number, number[]>, fb: Map<number, number[]>): [number, number][] {
+  const bag = (tokens: Token[], idx: number[]) => {
+    const m = new Map<string, number>();
+    for (const i of idx) {
+      const n = tokens[i].norm.toLowerCase();
+      m.set(n, (m.get(n) ?? 0) + 1);
+    }
+    return m;
+  };
+  const listA = [...fa].map(([o, idx], k) => ({ o, bag: bag(tokensA, idx), n: idx.length, rel: k / Math.max(1, fa.size - 1) }));
+  const listB = [...fb].map(([o, idx], k) => ({ o, bag: bag(tokensB, idx), n: idx.length, rel: k / Math.max(1, fb.size - 1) }));
+  const cands: { a: number; b: number; score: number }[] = [];
+  for (const x of listA) {
+    const oa = A.objects[x.o];
+    for (const y of listB) {
+      const ob = B.objects[y.o];
+      if (oa.kind !== ob.kind) continue;
+      let inter = 0;
+      for (const [k, c] of x.bag) inter += Math.min(c, y.bag.get(k) ?? 0);
+      let score = (2 * inter) / (x.n + y.n);
+      if (oa.kind === 'figure' && oa.hashes.some((h) => h && ob.hashes.includes(h))) score += 0.3;
+      if (oa.number === ob.number) score += 0.02;
+      score -= 0.05 * Math.abs(x.rel - y.rel);
+      cands.push({ a: x.o, b: y.o, score });
+    }
+  }
+  cands.sort((x, y) => y.score - x.score);
+  const usedA = new Set<number>();
+  const usedB = new Set<number>();
+  const out: [number, number][] = [];
+  for (const c of cands) {
+    if (c.score < 0.4 || usedA.has(c.a) || usedB.has(c.b)) continue;
+    usedA.add(c.a);
+    usedB.add(c.b);
+    out.push([c.a, c.b]);
+  }
+  return out;
+}
+
 interface Move {
   a: number[];
   b: number[];
 }
 
-/** Long deleted and inserted stretches that share text are reported as moved blocks. */
-function detectMoves(
-  ops: Op[],
-  ia: Int32Array,
-  ib: Int32Array,
-  tokensA: Token[],
-  aToB: Int32Array,
-  bToA: Int32Array,
-  aState: Uint8Array,
-  bState: Uint8Array,
-): Move[] {
+/** Pieces of one moved block (split by small edits) become one move. */
+function mergeMoves(moves: Move[]): Move[] {
+  const out: Move[] = [];
+  for (const m of moves.filter((x) => x.a.length).sort((x, y) => x.a[0] - y.a[0])) {
+    const last = out[out.length - 1];
+    const gapA = last ? m.a[0] - last.a[last.a.length - 1] : Infinity;
+    const gapB = last ? m.b[0] - last.b[last.b.length - 1] : Infinity;
+    if (last && gapA <= 80 && gapB >= 0 && gapB <= 80) {
+      last.a.push(...m.a);
+      last.b.push(...m.b);
+    } else out.push({ a: [...m.a], b: [...m.b] });
+  }
+  return out;
+}
+
+/** Long deleted and inserted stretches of the running text that share text are reported as moved blocks. */
+function detectMoves(seg: Segment2, tokensA: Token[], aToB: Int32Array, bToA: Int32Array, aState: Uint8Array, bState: Uint8Array): Move[] {
+  const { ops, sa: ia, sb: ib } = seg;
   const K = 5;
   const delRuns: { a0: number; a1: number; op: number }[] = [];
   const insRuns: { b0: number; b1: number; op: number }[] = [];
@@ -224,12 +412,12 @@ function detectMoves(
         // A move needs real prose, not a shared formula like "B0 → D−π+ and Bs0 → Ds−π+".
         if (!inPlace) {
           let words = 0;
-          for (let t = d.a0 + op.a0; t < d.a0 + op.a1; t++) if (/^[A-Za-z]{3,}[,.;:]?$/.test(tokensA[t].norm)) words++;
+          for (let k = d.a0 + op.a0; k < d.a0 + op.a1; k++) if (/^[A-Za-z]{3,}[,.;:]?$/.test(tokensA[seg.a[k]].norm)) words++;
           if (words < 6) continue;
         }
         for (let k = 0; k < op.a1 - op.a0; k++) {
-          const ta = d.a0 + op.a0 + k;
-          const tb = r.b0 + op.b0 + k;
+          const ta = seg.a[d.a0 + op.a0 + k];
+          const tb = seg.b[r.b0 + op.b0 + k];
           if (aState[ta] !== TokState.Changed || bState[tb] !== TokState.Changed) continue;
           aToB[ta] = tb;
           bToA[tb] = ta;

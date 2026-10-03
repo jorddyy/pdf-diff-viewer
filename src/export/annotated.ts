@@ -37,7 +37,7 @@ export function textChangeSpecs(B: DocModel, al: Alignment, changes: Change[]): 
     const oldText = segText(c.aSegs);
     const tone = c.kind === 'moved' ? 'mv' : c.cls === 'numeric' ? 'num' : c.cls === 'renumber' || c.cls === 'toc' ? 'ren' : c.kind === 'insert' ? 'ins' : 'edit';
     let contents: string;
-    if (c.kind === 'moved') contents = `Moved here from old page ${c.aPage + 1}.`;
+    if (c.kind === 'moved') contents = `Moved here from old page ${c.aPage + 1}${c.move ? `, where it followed “… ${c.move.afterA}”` : ''}.`;
     else if (c.kind === 'insert') contents = 'Added.';
     else if (c.kind === 'delete') contents = `Removed: “${oldText}”`;
     else if (c.cls === 'numeric') contents = `Number changed. Was: “${oldText}”`;

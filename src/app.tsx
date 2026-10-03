@@ -4,7 +4,7 @@ import { extractInBrowser, openForCompare, openForDisplay, sha256, type PageSize
 import { clearCache, getCached, putCached } from './pdf/cache';
 import { alignDocs, type Alignment } from './align/align';
 import type { DocModel } from './extract/types';
-import { PANE_PAD, PaneControl, PdfPane, type InputKind } from './ui/PdfPane';
+import { PANE_PAD, PageBox, PaneControl, PdfPane, type InputKind } from './ui/PdfPane';
 import { ChangeList, DEFAULT_FILTERS, FIG_BADGE, badge, changeVisible, entryCategory, type Entry, type Filters, type Follower } from './ui/ChangeList';
 import { ExportDialog, type ExportOptions } from './ui/ExportDialog';
 import { buildSideBySide } from './export/sideBySide';
@@ -589,7 +589,14 @@ export function App() {
           badge: text,
           tone,
           pages: `p.${c.aPage + 1} -> p.${c.bPage + 1}`,
-          text: c.kind === 'insert' ? n : c.kind === 'delete' ? o : `${o}  ->  ${n}`,
+          text:
+            c.kind === 'moved' && c.move
+              ? `"${c.move.first} ..." (${c.move.words} words) now follows "... ${c.move.afterB}"`
+              : c.kind === 'insert'
+                ? n
+                : c.kind === 'delete'
+                  ? o
+                  : `${o}  ->  ${n}`,
           bPage: c.bPage,
           aPage: c.aPage,
           section: e.section,
@@ -769,6 +776,16 @@ export function App() {
     if (kind === 'up') leader.current = { side: leader.current.side, until: now + 400, down: false };
     else leader.current = { side, until: now + 400, down: kind === 'down' };
   };
+  const goToPage = (side: Side, page: number) => {
+    leader.current = { side: null, until: 0, down: false };
+    const [from, to] = side === 'a' ? [ctlA, ctlB] : [ctlB, ctlA];
+    from.scrollToPage(page);
+    const pos = sync && anchors ? from.centerPos() : null;
+    const target = pos && mapPos(anchors!, side, pos);
+    if (target) to.setCenter(target);
+    scheduleSave();
+  };
+
   const onScroll = (side: Side) => {
     scheduleSave();
     const L = leader.current;
@@ -802,6 +819,12 @@ export function App() {
       const list = entries.filter((x) => filters[entryCategory(x)]);
       if (!list.length) return;
       const idx = selected === null ? -1 : list.findIndex((x) => x.key === selected);
+      if (e.key === 'g') {
+        const boxes = document.querySelectorAll<HTMLInputElement>('.pagebox input');
+        boxes[boxes.length - 1]?.focus();
+        e.preventDefault();
+        return;
+      }
       if (e.key === 'j' || e.key === 'n') select(list[Math.min(list.length - 1, idx + 1)].key);
       else if (e.key === 'k' || e.key === 'p') select(list[Math.max(0, idx - 1)].key);
       else return;
@@ -996,7 +1019,7 @@ export function App() {
                 Clear stored data
               </button>
             </p>
-            <p class="small">Keys: j/n next change, k/p previous; in the figure comparison 1–4 switch views, Esc closes.</p>
+            <p class="small">Keys: j/n next change, k/p previous, g go to page; in the figure comparison 1–4 switch views, Esc closes.</p>
             {recent.length > 0 && (
               <section class="recent">
                 <h3>Recent comparisons</h3>
@@ -1125,7 +1148,9 @@ export function App() {
               v ? (
                 <div class="col" key={v.id}>
                   <div class="col-head">
-                    <strong>{v.label}</strong> <span class="fname">{v.name}</span>
+                    <strong>{v.label}</strong>
+                    {v.sizes.length > 0 && <PageBox control={i === 0 ? ctlA : ctlB} numPages={v.sizes.length} onGo={(p) => goToPage(i === 0 ? 'a' : 'b', p)} />}
+                    <span class="fname">{v.name}</span>
                     {v.doc && <span class="meta">{v.doc.numPages} pages{v.doc.hasLineNumbers ? ' · line numbers' : ''}</span>}
                     {v.doc && !v.doc.quality.ok && (
                       <span class="warn" title="Many glyphs have no usable text mapping (e.g. a browser re-print); the text diff may be unreliable.">
