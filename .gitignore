@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.pdf
+WG*.md
+examples/
+samples/
+.vite/
+*.log
+e2e-tmp/
