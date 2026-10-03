@@ -46,31 +46,40 @@ export function buildLines(page: number, pieces: Piece[], marks: LineMark[], bod
     }
     if (best && !anchored.has(best)) anchored.set(best, m);
   }
-  const isMain = (r: Row) => {
-    if (marks.length) return anchored.has(r);
+  // Main rows: numbered lines, plus rows with a fair amount of text (table
+  // rows, captions, unnumbered documents) that are not the scripts of a
+  // numbered line. The same rule with and without line numbers keeps tables
+  // comparable between numbered drafts and the unnumbered final version.
+  const textual = (r: Row) => {
     const chars = r.pieces.reduce((n, p) => n + p.text.length, 0);
     return chars >= 20 || (chars >= 8 && r.pieces.some((p) => p.size >= 0.9 * bodySize));
   };
-  const main = rows.filter(isMain);
+  const nearAnchored = (r: Row) =>
+    [...anchored.keys()].some((a) => a !== r && r.size <= 0.85 * a.size && Math.abs(r.base - a.base) <= 0.62 * a.size);
+  const mainSet = new Set(rows.filter((r) => anchored.has(r) || (textual(r) && !nearAnchored(r))));
+  const main = rows.filter((r) => mainSet.has(r));
+  // Attach the remaining pieces (sub/superscripts) left to right to the
+  // nearest main row; a script may start right after the row's last glyph,
+  // so the row grows as pieces join ("× 10" + "−" + "3").
+  const loose = rows.filter((r) => !mainSet.has(r)).flatMap((r) => r.pieces).sort((a, b) => a.x0 - b.x0);
   const leftover: Piece[] = [];
-  for (const r of rows) {
-    if (isMain(r)) continue;
-    for (const p of r.pieces) {
-      let target: Row | null = null;
-      let bestD = Infinity;
-      for (const n of main) {
-        const d = Math.abs(p.base - n.base);
-        const limit = p.size <= 0.85 * n.size ? 0.62 * n.size : 0.3 * n.size;
-        const pad = 0.8 * n.size;
-        if (d > limit || p.x0 < n.x0 - pad || p.x1 > n.x1 + pad) continue;
-        if (d < bestD) {
-          bestD = d;
-          target = n;
-        }
+  for (const p of loose) {
+    let target: Row | null = null;
+    let bestD = Infinity;
+    for (const n of main) {
+      const d = Math.abs(p.base - n.base);
+      const limit = p.size <= 0.85 * n.size ? 0.62 * n.size : 0.3 * n.size;
+      const pad = 0.8 * n.size;
+      if (d > limit || p.x0 < n.x0 - pad || p.x0 > n.x1 + pad) continue;
+      if (d < bestD) {
+        bestD = d;
+        target = n;
       }
-      if (target) target.pieces.push(p);
-      else leftover.push(p);
     }
+    if (target) {
+      target.pieces.push(p);
+      target.x1 = Math.max(target.x1, p.x1);
+    } else leftover.push(p);
   }
   rows = [...main, ...foldScripts(groupRows(leftover))].sort((a, b) => a.base - b.base);
 

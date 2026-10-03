@@ -36,10 +36,11 @@ export interface FigureInfo {
 
 export type Entry =
   | { key: string; type: 'text'; change: Change; pos: number; section: string }
-  | { key: string; type: 'figure'; fig: FigureInfo; pos: number; section: string };
+  | { key: string; type: 'figure'; fig: FigureInfo; pos: number; section: string }
+  | { key: string; type: 'renum'; label: string; aPage: number; bPage: number; pos: number; section: string };
 
 export function entryCategory(e: Entry): keyof Filters {
-  return e.type === 'text' ? changeCategory(e.change) : 'figures';
+  return e.type === 'text' ? changeCategory(e.change) : e.type === 'figure' ? 'figures' : 'renumber';
 }
 
 const FILTER_LABELS: [keyof Filters, string, string][] = [
@@ -51,7 +52,7 @@ const FILTER_LABELS: [keyof Filters, string, string][] = [
   ['toc', 'Contents', 'Table of contents'],
 ];
 
-function badge(c: Change): [string, string] {
+export function badge(c: Change): [string, string] {
   if (c.kind === 'moved') return ['Moved', 'mv'];
   if (c.cls === 'numeric') return ['Number', 'num'];
   if (c.cls === 'renumber') return ['Renumbered', 'ren'];
@@ -61,7 +62,7 @@ function badge(c: Change): [string, string] {
   return ['Edited', 'edit'];
 }
 
-const FIG_BADGE: Record<FigureStatus, [string, string]> = {
+export const FIG_BADGE: Record<FigureStatus, [string, string]> = {
   changed: ['Figure changed', 'num'],
   added: ['Figure added', 'ins'],
   removed: ['Figure removed', 'del'],
@@ -122,12 +123,28 @@ export function ChangeList({ entries, filters, setFilters, selected, onSelect, o
         {visible.map((e) => {
           const head = e.section !== lastSection ? <div class="sec">{e.section || 'Front matter'}</div> : null;
           lastSection = e.section;
+          if (e.type === 'renum') {
+            return (
+              <>
+                {head}
+                <div key={e.key} data-key={e.key} class={`chg ${selected === e.key ? 'sel' : ''}`} {...clickable(() => onSelect(e.key))}>
+                  <div class="chg-head">
+                    <span class="badge ren">Renumbered</span>
+                    <span class="lbl">{e.label}</span>
+                    <span class="pages">
+                      p.{e.aPage + 1} → p.{e.bPage + 1}
+                    </span>
+                  </div>
+                </div>
+              </>
+            );
+          }
           if (e.type === 'figure') {
             const [text, cls] = FIG_BADGE[e.fig.status];
             return (
               <>
                 {head}
-                <div key={e.key} data-key={e.key} class={`chg fig ${selected === e.key ? 'sel' : ''}`} role="button" tabIndex={0} onClick={() => onSelect(e.key)}>
+                <div key={e.key} data-key={e.key} class={`chg fig ${selected === e.key ? 'sel' : ''}`} {...clickable(() => onSelect(e.key))}>
                   <div class="chg-head">
                     <span class={`badge ${cls}`}>{text}</span>
                     <span class="lbl">{e.fig.title}</span>
@@ -158,7 +175,7 @@ export function ChangeList({ entries, filters, setFilters, selected, onSelect, o
           return (
             <>
               {head}
-              <button key={e.key} data-key={e.key} class={`chg ${selected === e.key ? 'sel' : ''}`} onClick={() => onSelect(e.key)}>
+              <div key={e.key} data-key={e.key} class={`chg ${selected === e.key ? 'sel' : ''}`} {...clickable(() => onSelect(e.key))}>
                 <div class="chg-head">
                   <span class={`badge ${cls}`}>{text}</span>
                   {c.label && <span class="lbl">{c.label}</span>}
@@ -176,11 +193,32 @@ export function ChangeList({ entries, filters, setFilters, selected, onSelect, o
                     <Segs segs={c.bSegs} cls="ins" />
                   </div>
                 )}
-              </button>
+              </div>
             </>
           );
         })}
       </div>
     </div>
   );
+}
+
+/**
+ * Props for a card that acts as a button but keeps its text selectable:
+ * a click that ends a text selection does not activate it.
+ */
+export function clickable(activate: () => void) {
+  return {
+    role: 'button' as const,
+    tabIndex: 0,
+    onClick: (e: MouseEvent) => {
+      const sel = window.getSelection();
+      if (sel && sel.toString().trim() && (e.currentTarget as Node).contains(sel.anchorNode)) return;
+      activate();
+    },
+    onKeyDown: (e: KeyboardEvent) => {
+      if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
+      e.preventDefault();
+      activate();
+    },
+  };
 }

@@ -11,6 +11,10 @@ export interface RegionRef {
 
 export interface ComparePair {
   label: string;
+  /** Panel state, if known (figures). */
+  status?: 'same' | 'changed' | 'new' | 'removed' | 'pending';
+  /** Fraction of ink that differs. */
+  diff?: number | null;
   a: RegionRef | null;
   b: RegionRef | null;
 }
@@ -23,6 +27,7 @@ export interface CompareRequest {
 }
 
 type Mode = 'side' | 'blink' | 'diff' | 'swipe';
+const STATE_TEXT = { same: 'unchanged', changed: 'changed', new: 'new', removed: 'removed' } as const;
 const MODES: [Mode, string][] = [
   ['side', 'Side by side'],
   ['blink', 'Blink'],
@@ -32,6 +37,12 @@ const MODES: [Mode, string][] = [
 
 export function CompareModal({ req, onClose }: { req: CompareRequest; onClose: () => void }) {
   const [mode, setMode] = useState<Mode>('side');
+  const [showSame, setShowSame] = useState(false);
+  // Changed, new and removed panels first; unchanged panels only on request.
+  const order = { changed: 0, new: 1, removed: 2, pending: 3, same: 4 } as const;
+  const sorted = [...req.pairs].sort((x, y) => order[x.status ?? 'changed'] - order[y.status ?? 'changed']);
+  const same = sorted.filter((p) => p.status === 'same');
+  const shown = showSame || same.length === sorted.length ? sorted : sorted.filter((p) => p.status !== 'same');
   const dialog = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -60,9 +71,14 @@ export function CompareModal({ req, onClose }: { req: CompareRequest; onClose: (
           </button>
         </div>
         <div class="modal-body">
-          {req.pairs.map((p, i) => (
+          {shown.map((p, i) => (
             <PairView key={i} pair={p} mode={mode} aLabel={req.aLabel} bLabel={req.bLabel} />
           ))}
+          {same.length > 0 && !showSame && (
+            <button class="btn" onClick={() => setShowSame(true)}>
+              Show {same.length} unchanged {same.length === 1 ? 'panel' : 'panels'}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -114,7 +130,13 @@ function PairView({ pair, mode, aLabel, bLabel }: { pair: ComparePair; mode: Mod
   const effective: Mode = both ? mode : 'side';
   return (
     <figure class="pair-view">
-      <figcaption>{pair.label}</figcaption>
+      <figcaption>
+        {pair.label}
+        {pair.status && pair.status !== 'pending' && <span class={`pstate ${pair.status}`}>{STATE_TEXT[pair.status]}</span>}
+        {pair.status === 'changed' && typeof pair.diff === 'number' && (
+          <span class="small"> {pair.diff >= 0.999 ? 'different size or crop' : `${(100 * pair.diff).toFixed(1)}% of the ink differs`}</span>
+        )}
+      </figcaption>
       {effective === 'side' && (
         <div class="side-by-side">
           <div>

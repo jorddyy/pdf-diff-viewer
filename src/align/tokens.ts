@@ -15,6 +15,8 @@ export function tokenize(doc: DocModel): Token[] {
   let pending: Token | null = null;
   for (const line of doc.lines) {
     if (!COMPARED.has(line.kind)) continue;
+    const obj = line.object >= 0 ? doc.objects[line.object] : null;
+    const captionStart = line.kind === 'caption' && obj?.kind !== 'equation' && obj?.lines[0] === line.id;
     line.words.forEach((wid, k) => {
       const w = doc.words[wid];
       if (pending && k === 0 && /^[a-z]/.test(w.norm)) {
@@ -38,7 +40,13 @@ export function tokenize(doc: DocModel): Token[] {
           return;
         }
       }
-      const tok: Token = { norm: w.norm, words: [wid], line: line.id };
+      // Float and equation numbers are compared as placeholders, so that the
+      // alignment follows the caption text when floats are renumbered;
+      // renumbering is reported from the object matching instead.
+      let norm = w.norm;
+      if (captionStart && k === 1 && /^[A-Z]?\d+(\.\d+)?[:.]$/.test(norm)) norm = '#' + norm.slice(-1);
+      else if (line.kind === 'equation' && k === line.words.length - 1 && /^\((?:[A-Z]\.)?\d+[a-z]?\)[.,]?$/.test(norm)) norm = '(#)';
+      const tok: Token = { norm, words: [wid], line: line.id };
       const last = k === line.words.length - 1;
       if (last && line.kind === 'body' && /[a-z]{2}-$/i.test(w.norm)) pending = tok;
       else tokens.push(tok);

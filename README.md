@@ -19,9 +19,15 @@ notes:
   Review rounds are matched to the version they were written on automatically.
   Export the review with the new locations added after each reference.
 
+- **Export to send around.** Either a side-by-side diff PDF (old page next to
+  the matching new page, changes highlighted, a linked list of all changes in
+  front) or the new version with standard PDF annotations (highlights with
+  "was: …" notes).
+
 Everything runs locally in the browser tab: PDFs and comments are never
-uploaded. Analysed versions are cached in the browser (IndexedDB) so reopening
-them is instant; the welcome page has a button to clear that.
+uploaded. Comparisons are saved in the browser (IndexedDB) automatically: a
+reload brings back where you were, and the start page lists recent
+comparisons. "Clear stored data" on the start page removes everything.
 
 ## Using it
 
@@ -36,6 +42,12 @@ Open the page, drop two or more PDFs on it.
 - **Comments tab:** paste or load the review. Each `## Round …` heading is
   coupled to a version (adjustable). Clicking a comment highlights the cited
   text in both versions. "History" shows the status in every later version.
+  Tick comments off as done, delete single ones (with undo) or remove all.
+- Text on the pages and in the lists can be selected and copied; the browser's
+  find (Ctrl+F) searches the PDFs too. The theme button switches between
+  system, light and dark.
+- **Export** (header) writes the comparison as a PDF; renumbering and your
+  comments are left out unless you tick them.
 
 ## Development
 

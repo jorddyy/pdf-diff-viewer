@@ -4,24 +4,31 @@ import { extractInBrowser, openForCompare, openForDisplay, sha256, type PageSize
 import { clearCache, getCached, putCached } from './pdf/cache';
 import { alignDocs, type Alignment } from './align/align';
 import type { DocModel } from './extract/types';
-import { PaneControl, PdfPane } from './ui/PdfPane';
-import { ChangeList, DEFAULT_FILTERS, changeVisible, entryCategory, type Entry, type Filters } from './ui/ChangeList';
+import { PANE_PAD, PaneControl, PdfPane, type InputKind } from './ui/PdfPane';
+import { ChangeList, DEFAULT_FILTERS, FIG_BADGE, badge, changeVisible, entryCategory, type Entry, type Filters } from './ui/ChangeList';
+import { ExportDialog, type ExportOptions } from './ui/ExportDialog';
+import { buildSideBySide } from './export/sideBySide';
+import { buildAnnotated, textChangeSpecs, type AnnotationSpec } from './export/annotated';
+import type { SummaryItem } from './export/types';
 import { CompareModal, type CompareRequest } from './ui/CompareModal';
 import { matchObjects, type FigureStatus, type ObjectMatch } from './align/objects';
 import { CHANGED_THRESHOLD, inkDiff, renderRegions, type Raster } from './figures/compare';
-import { addFigureMarks, sideMarks, type Side } from './ui/marks';
-import { buildAnchors, mapPos } from './ui/sync';
-import { parseComments } from './comments/parse';
+import { addFigureMarks, panelStates, sideMarks, type PanelState, type Side } from './ui/marks';
+import { buildSyncMap, mapPos } from './ui/sync';
+import { parseComments, removeItem } from './comments/parse';
 import { assignRounds } from './comments/assign';
 import { resolveComment, type CommentResolution, type ResolveContext, type VersionData } from './comments/resolve';
 import { annotateMarkdown } from './comments/export';
 import { matchSections, type SectionMatch } from './align/objects';
 import { CommentsPanel, type History } from './ui/CommentsPanel';
 import type { Mark } from './ui/marks';
+import { clearWorkspaces, deleteWorkspace, getFile, listWorkspaces, putFile, saveWorkspace, workspaceTitle, type Workspace } from './pdf/workspaces';
 
 export interface Version {
   id: number;
   name: string;
+  /** SHA-256 of the file: identity across sessions. */
+  hash: string;
   bytes: ArrayBuffer;
   pdf: PDFDocumentProxy | null;
   sizes: PageSize[];
@@ -68,32 +75,62 @@ export function App() {
   const [sync, setSync] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [tab, setTab] = useState<'changes' | 'comments'>('changes');
-  const [commentText, setCommentText] = useState(() => storageGet('pdfdiff.comments') ?? '');
+  const [theme, setTheme] = useState<'auto' | 'light' | 'dark'>(() => (storageGet('pdfdiff.theme') as 'light' | 'dark' | null) ?? 'auto');
+  useEffect(() => {
+    if (theme === 'auto') delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = theme;
+    storageSet('pdfdiff.theme', theme === 'auto' ? '' : theme);
+  }, [theme]);
+  const [commentText, setCommentText] = useState('');
   const [roundOverride, setRoundOverride] = useState<Map<number, number | null>>(new Map());
   const [showHistory, setShowHistory] = useState(false);
+  const [done, setDone] = useState<Set<string>>(new Set());
+  const [undo, setUndo] = useState<{ text: string; label: string } | null>(null);
+  useEffect(() => {
+    if (!undo) return;
+    const t = setTimeout(() => setUndo(null), 8000);
+    return () => clearTimeout(t);
+  }, [undo]);
   const alignCache = useRef(new Map<string, Alignment>());
   const objCache = useRef(new Map<string, ObjectMatch[]>());
   const secCache = useRef(new Map<string, SectionMatch[]>());
   const ctlA = useMemo(() => new PaneControl(), []);
   const ctlB = useMemo(() => new PaneControl(), []);
   const fileInput = useRef<HTMLInputElement>(null);
+  const versionsRef = useRef<Version[]>([]);
+  versionsRef.current = versions;
+  const [storageNote, setStorageNote] = useState<string | null>(null);
+  // The saved comparison this view belongs to.
+  const wsIdRef = useRef<string | null>(null);
+  const [wsMeta, setWsMeta] = useState<{ title: string; custom: boolean; created: number } | null>(null);
+  const [recent, setRecent] = useState<Workspace[]>([]);
+  const restoring = useRef(true);
+  const pendingScroll = useRef<Workspace['scroll'] | null>(null);
 
-  // Fit the widest page into a pane until the user zooms.
+  // Fit the typical (median) page width into a pane until the user zooms;
+  // wider pages, like a landscape table, get their own smaller scale.
+  const [paneWidth, setPaneWidth] = useState(0);
   useEffect(() => {
     const el = panesRef.current;
     if (!el) return;
     const measure = () => {
       const cols = [...el.querySelectorAll<HTMLElement>('.pane')];
-      if (!cols.length) return;
-      const width = Math.min(...cols.map((c) => c.clientWidth));
-      const pageW = Math.max(1, ...versions.flatMap((v) => v.sizes.map((s) => s.width)));
-      setFitScale(Math.max(0.3, Math.min(3, (width - 2 * 14 - 18) / pageW)));
+      if (cols.length) setPaneWidth(Math.min(...cols.map((c) => c.clientWidth)));
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
   }, [versions.map((v) => `${v.id}:${v.sizes.length}`).join(), left, right]);
+  const fitWidth = Math.max(100, paneWidth - 2 * PANE_PAD - 2);
+  useEffect(() => {
+    const widths = versions
+      .filter((v) => v.id === left || v.id === right)
+      .flatMap((v) => v.sizes.map((s) => s.width))
+      .sort((a, b) => a - b);
+    const median = widths.length ? widths[widths.length >> 1] : 595;
+    if (paneWidth) setFitScale(Math.max(0.3, Math.min(3, fitWidth / median)));
+  }, [paneWidth, versions, left, right]);
   const scale = zoom ?? fitScale;
 
   const update = useCallback((id: number, patch: Partial<Version>) => {
@@ -110,30 +147,41 @@ export function App() {
     return r;
   }, []);
 
+  /** Load one PDF (from a drop or a saved comparison). Returns its version id. */
+  const addVersion = useCallback(
+    (bytes: ArrayBuffer, name: string, hash: string, store: boolean): number => {
+      const id = nextId++;
+      const v: Version = { id, name, hash, bytes, pdf: null, sizes: [], doc: null, progress: 0, error: null, label: labelFromName(name) };
+      setVersions((vs) => (vs.some((x) => x.hash === hash) ? vs : sortVersions([...vs, v])));
+      openForDisplay(bytes)
+        .then(({ pdf, sizes }) => update(id, { pdf, sizes }))
+        .catch((e) => update(id, { error: String(e?.message ?? e) }));
+      (async () => {
+        let doc = await getCached(hash);
+        if (doc) doc.name = name;
+        else {
+          doc = await extractInBrowser(bytes, name, (d, t) => update(id, { progress: d / t }));
+          putCached(hash, doc);
+        }
+        update(id, { doc, label: doc.label, progress: 1 });
+      })().catch((e) => update(id, { error: String(e?.message ?? e) }));
+      if (store) putFile(hash, bytes, name).catch(() => setStorageNote('This browser did not allow storing the PDFs; the comparison will not be restored after a reload.'));
+      return id;
+    },
+    [update],
+  );
+
   const addFiles = useCallback(
     async (files: Iterable<File>) => {
       for (const f of files) {
         if (!/\.pdf$/i.test(f.name) && f.type !== 'application/pdf') continue;
         const bytes = await f.arrayBuffer();
-        const id = nextId++;
-        const v: Version = { id, name: f.name, bytes, pdf: null, sizes: [], doc: null, progress: 0, error: null, label: labelFromName(f.name) };
-        setVersions((vs) => sortVersions([...vs, v]));
-        openForDisplay(bytes)
-          .then(({ pdf, sizes }) => update(id, { pdf, sizes }))
-          .catch((e) => update(id, { error: String(e?.message ?? e) }));
-        (async () => {
-          const hash = await sha256(bytes);
-          let doc = await getCached(hash);
-          if (doc) doc.name = f.name;
-          else {
-            doc = await extractInBrowser(bytes, f.name, (d, t) => update(id, { progress: d / t }));
-            putCached(hash, doc);
-          }
-          update(id, { doc, label: doc.label, progress: 1 });
-        })().catch((e) => update(id, { error: String(e?.message ?? e) }));
+        const hash = await sha256(bytes);
+        if (versionsRef.current.some((v) => v.hash === hash)) continue;
+        addVersion(bytes, f.name, hash, true);
       }
     },
-    [update],
+    [addVersion],
   );
 
   // Default pair: the two newest versions, until the user picks a pair.
@@ -152,6 +200,147 @@ export function App() {
 
   const A = versions.find((v) => v.id === left) ?? null;
   const B = versions.find((v) => v.id === right) ?? null;
+
+  // ---- Saved comparisons: restore the last one, save every change ----
+  const closeAll = () => {
+    for (const v of versionsRef.current) v.pdf?.loadingTask.destroy();
+    setVersions([]);
+    alignCache.current.clear();
+    objCache.current.clear();
+    secCache.current.clear();
+    setSelected(null);
+    setCompare(null);
+  };
+
+  const restore = async (ws: Workspace) => {
+    restoring.current = true;
+    closeAll();
+    // Read all files first, so the versions appear together.
+    const files = await Promise.all(ws.versions.map((v) => getFile(v.hash).catch(() => null)));
+    const ids = new Map<string, number>();
+    ws.versions.forEach((v, i) => {
+      const f = files[i];
+      if (f) ids.set(v.hash, addVersion(f.bytes, v.name, v.hash, false));
+    });
+    if (files.some((f) => !f)) setStorageNote('Some PDFs of this comparison were no longer stored; add them again.');
+    const id = (h: string | null) => (h ? (ids.get(h) ?? null) : null);
+    setLeft(id(ws.left));
+    setRight(id(ws.right));
+    setPairChosen(ws.pairChosen);
+    setFilters({ ...DEFAULT_FILTERS, ...ws.filters });
+    setZoom(ws.zoom);
+    setSync(ws.sync);
+    setTab(ws.tab);
+    setCommentText(ws.comments);
+    setRoundOverride(new Map(ws.roundOverride.map(([r, h]) => [r, id(h)])));
+    setDone(new Set(ws.done));
+    pendingScroll.current = ws.scroll;
+    wsIdRef.current = ws.id;
+    setWsMeta({ title: ws.title, custom: ws.customTitle, created: ws.created });
+    restoring.current = false;
+  };
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const list = await listWorkspaces();
+        setRecent(list);
+        if (list[0]) await restore(list[0]);
+        else {
+          // Comments pasted before comparisons were saved.
+          const old = storageGet('pdfdiff.comments');
+          if (old) setCommentText(old);
+        }
+        storageSet('pdfdiff.comments', '');
+      } catch {
+        setStorageNote('Saved comparisons are unavailable in this browser (private window or blocked storage).');
+      } finally {
+        restoring.current = false;
+      }
+    })();
+  }, []);
+
+  const doSave = useRef<() => Promise<void>>(async () => {});
+  doSave.current = async () => {
+    if (restoring.current) return;
+    const vs = versionsRef.current;
+    if (!vs.length) {
+      // All versions of this comparison were removed.
+      if (wsIdRef.current) await deleteWorkspace(wsIdRef.current).catch(() => {});
+      wsIdRef.current = null;
+      setWsMeta(null);
+      return;
+    }
+    if (!vs.every((v) => v.hash)) return;
+    const hashOf = (id: number | null) => vs.find((v) => v.id === id)?.hash ?? null;
+    const versionsW = vs.map((v) => ({ hash: v.hash, name: v.name, label: v.label }));
+    const id = wsIdRef.current ?? crypto.randomUUID();
+    wsIdRef.current = id;
+    const title = wsMeta?.custom ? wsMeta.title : workspaceTitle(versionsW, hashOf(left), hashOf(right));
+    const created = wsMeta?.created ?? Date.now();
+    if (!wsMeta || wsMeta.title !== title) setWsMeta({ title, custom: !!wsMeta?.custom, created });
+    const ws: Workspace = {
+      id,
+      title,
+      customTitle: !!wsMeta?.custom,
+      created,
+      updated: Date.now(),
+      versions: versionsW,
+      left: hashOf(left),
+      right: hashOf(right),
+      pairChosen,
+      filters: { ...filters },
+      zoom,
+      sync,
+      tab,
+      scroll: { a: ctlA.centerPos(), b: ctlB.centerPos() },
+      comments: commentText,
+      roundOverride: [...roundOverride].map(([r, v]) => [r, v === null ? null : hashOf(v)]),
+      done: [...done],
+    };
+    try {
+      await saveWorkspace(ws);
+    } catch {
+      setStorageNote('Could not save this comparison (browser storage full or blocked).');
+    }
+  };
+  const saveTimer = useRef(0);
+  const scheduleSave = useCallback(() => {
+    clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => doSave.current(), 700);
+  }, []);
+  useEffect(scheduleSave, [versions.map((v) => `${v.hash}:${v.label}`).join(), left, right, pairChosen, filters, zoom, sync, tab, commentText, roundOverride, done, wsMeta?.title]);
+  useEffect(() => {
+    const flush = () => doSave.current();
+    window.addEventListener('pagehide', flush);
+    return () => window.removeEventListener('pagehide', flush);
+  }, []);
+
+  // Back to the saved scroll positions once both panes have their pages.
+  useEffect(() => {
+    const p = pendingScroll.current;
+    if (!p || !A?.sizes.length || !B?.sizes.length || !paneWidth) return;
+    const t = setTimeout(() => {
+      pendingScroll.current = null;
+      if (p.a) ctlA.setCenter(p.a);
+      if (p.b) ctlB.setCenter(p.b);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [A?.sizes.length, B?.sizes.length, paneWidth, fitScale]);
+
+  const newComparison = async () => {
+    await doSave.current();
+    wsIdRef.current = null;
+    setWsMeta(null);
+    restoring.current = true;
+    closeAll();
+    setCommentText('');
+    setRoundOverride(new Map());
+    setDone(new Set());
+    setPairChosen(false);
+    setRecent(await listWorkspaces().catch(() => []));
+    restoring.current = false;
+  };
 
   const al = useMemo(() => (A?.doc && B?.doc ? getAlign({ id: A.id, doc: A.doc }, { id: B.id, doc: B.doc }) : null), [A?.doc, B?.doc]);
 
@@ -179,10 +368,11 @@ export function App() {
     },
     [getAlign],
   );
-  const figs = useMemo(
-    () => (al && A?.doc && B?.doc ? objectsFor({ id: A.id, label: A.label, doc: A.doc }, { id: B.id, label: B.label, doc: B.doc }).filter((m) => m.kind === 'figure') : []),
+  const objMatches = useMemo(
+    () => (al && A?.doc && B?.doc ? objectsFor({ id: A.id, label: A.label, doc: A.doc }, { id: B.id, label: B.label, doc: B.doc }) : []),
     [al],
   );
+  const figs = useMemo(() => objMatches.filter((m) => m.kind === 'figure'), [objMatches]);
   const [figStatus, setFigStatus] = useState<Map<number, { status: FigureStatus; diffs: (number | null)[] }>>(new Map());
   useEffect(() => {
     setSelected(null);
@@ -236,7 +426,8 @@ export function App() {
   }, [figs, A?.doc, B?.doc]);
 
   const statusOf = useCallback((m: ObjectMatch): FigureStatus => figStatus.get(m.id)?.status ?? m.status, [figStatus]);
-  const anchors = useMemo(() => (al && A?.doc && B?.doc ? buildAnchors(A.doc, B.doc, al) : null), [al]);
+  const figInfo = useCallback((m: ObjectMatch) => ({ status: statusOf(m), diffs: figStatus.get(m.id)?.diffs }), [statusOf, figStatus]);
+  const anchors = useMemo(() => (al && A?.doc && B?.doc ? buildSyncMap(A.doc, B.doc, al) : null), [al]);
 
   const entries = useMemo<Entry[]>(() => {
     if (!al || !A?.doc || !B?.doc) return [];
@@ -256,9 +447,8 @@ export function App() {
       const title = oa && ob && oa.number !== ob.number ? `${name(oa)} → ${name(ob)}` : name(ob ?? oa);
       const st = figStatus.get(m.id);
       let detail = '';
-      if (status === 'changed' && st) {
-        const n = st.diffs.filter((d) => d === null || d > CHANGED_THRESHOLD).length;
-        detail = m.parts.length > 1 ? `${n} of ${m.parts.length} panels differ.` : 'The graphic differs.';
+      if (status === 'changed') {
+        detail = m.parts.length > 1 ? panelSummary(m, st?.diffs) : 'The graphic differs.';
       } else if (status === 'pending') detail = 'Comparing the graphics…';
       else if (status === 'added') detail = 'New in this version.';
       else if (status === 'removed') detail = 'Not in the new version.';
@@ -276,11 +466,27 @@ export function App() {
         section: ob ? secName(db, ob.lines[0] ?? -1) : oa ? secName(da, oa.lines[0] ?? -1) : '',
       });
     }
+    // Renumbered floats and equations (their numbers are not part of the text comparison).
+    const KIND: Record<string, string> = { figure: 'Figure', table: 'Table', equation: 'Eq.' };
+    for (const m of objMatches) {
+      if (!m.renumbered || m.a === null || m.b === null) continue;
+      const oa = da.objects[m.a];
+      const ob = db.objects[m.b];
+      const fmt = (n: string) => (m.kind === 'equation' ? `(${n})` : n);
+      out.push({
+        key: `r${m.id}`,
+        type: 'renum',
+        label: `${KIND[m.kind]} ${fmt(oa.number)} → ${fmt(ob.number)}`,
+        aPage: oa.page,
+        bPage: ob.page,
+        pos: ob.page * 1e4 + ob.box[1] - 0.1,
+        section: secName(db, ob.lines[0] ?? -1),
+      });
+    }
     return out.sort((x, y) => x.pos - y.pos);
-  }, [al, figs, statusOf, figStatus, anchors]);
+  }, [al, figs, objMatches, statusOf, figStatus, anchors]);
 
   // ---- Review comments ----
-  useEffect(() => storageSet('pdfdiff.comments', commentText), [commentText]);
   const parsed = useMemo(() => (commentText.trim() ? parseComments(commentText) : null), [commentText]);
   const ready = versions.filter((v) => v.doc);
   const readyKey = ready.map((v) => v.id).join(',');
@@ -356,6 +562,110 @@ export function App() {
     return { a, b };
   }, [resolutions, selected, tab, A?.id, B?.id]);
 
+  // ---- PDF export ----
+  const [exportOpen, setExportOpen] = useState(false);
+  const runExport = async (opts: ExportOptions) => {
+    if (!al || !A?.doc || !B?.doc) return;
+    const exportFilters: Filters = { text: true, numeric: true, moved: true, figures: true, renumber: opts.minor, toc: opts.minor };
+    const vis = (c: Alignment['changes'][number]) => changeVisible(c, exportFilters);
+    const mA = sideMarks(A.doc, al, 'a', vis);
+    const mB = sideMarks(B.doc, al, 'b', vis);
+    addFigureMarks(mA, A.doc, figs, figInfo, 'a', CHANGED_THRESHOLD);
+    addFigureMarks(mB, B.doc, figs, figInfo, 'b', CHANGED_THRESHOLD);
+    const segs = (ss: { text: string; changed: boolean }[]) =>
+      ss
+        .filter((x) => x.changed)
+        .map((x) => x.text)
+        .join(' ');
+    const items: SummaryItem[] = [];
+    for (const e of entries) {
+      if (!exportFilters[entryCategory(e)]) continue;
+      if (e.type === 'text') {
+        const c = e.change;
+        const [text, tone] = badge(c);
+        const o = segs(c.aSegs);
+        const n = segs(c.bSegs);
+        items.push({
+          badge: text,
+          tone,
+          pages: `p.${c.aPage + 1} -> p.${c.bPage + 1}`,
+          text: c.kind === 'insert' ? n : c.kind === 'delete' ? o : `${o}  ->  ${n}`,
+          bPage: c.bPage,
+          aPage: c.aPage,
+          section: e.section,
+        });
+      } else if (e.type === 'figure') {
+        const [text, tone] = FIG_BADGE[e.fig.status];
+        items.push({ badge: text, tone: tone === 'num' ? 'fig' : tone, pages: `p.${(e.fig.aPage ?? -1) + 1 || '-'} -> p.${(e.fig.bPage ?? -1) + 1 || '-'}`, text: `${e.fig.title}: ${e.fig.detail}`, bPage: e.fig.bPage, aPage: e.fig.aPage, section: e.section });
+      } else {
+        items.push({ badge: 'Renumbered', tone: 'ren', pages: `p.${e.aPage + 1} -> p.${e.bPage + 1}`, text: e.label, bPage: e.bPage, aPage: e.aPage, section: e.section });
+      }
+    }
+    const comments: SummaryItem[] = [];
+    const specs: AnnotationSpec[] = [];
+    if (opts.comments) {
+      for (const r of resolutions) {
+        if (r.unassigned || r.item.notes) continue;
+        const ref = r.refs.find((x) => x.target);
+        const where = r.refs.filter((x) => x.source || x.target).map((x) => `${x.source?.label ?? '?'} -> ${x.target?.label ?? '-'}`).join('; ');
+        comments.push({ badge: r.status, tone: 'cmt', pages: where, text: r.item.text.replace(/\s+/g, ' '), bPage: ref?.target?.boxes[0]?.page ?? null, aPage: null, section: '' });
+        if (ref?.target) {
+          for (const x of ref.target.boxes) {
+            if (!mB.has(x.page)) mB.set(x.page, []);
+            mB.get(x.page)!.push({ box: x.box, cls: 'cmt', key: '' });
+          }
+          const first = ref.target.boxes[0];
+          if (first) specs.push({ page: first.page, type: 'Text', rects: [first.box], tone: 'cmt', contents: `[${r.status}] ${where}\n${r.item.text}` });
+        }
+      }
+    }
+    const title = wsMeta?.title ?? `${A.label} vs ${B.label}`;
+    const safe = (t: string) => t.replace(/[^\w.\- ]+/g, '_').trim();
+    let bytes: Uint8Array;
+    let file: string;
+    if (opts.format === 'side') {
+      bytes = await buildSideBySide({
+        title,
+        A: { label: A.label, name: A.name, bytes: A.bytes, doc: A.doc, marks: mA },
+        B: { label: B.label, name: B.name, bytes: B.bytes, doc: B.doc, marks: mB },
+        al,
+        items,
+        comments,
+        appUrl: /^https?:/.test(location.protocol) ? location.origin + location.pathname : 'https://jorddyy.github.io/pdf-diff-viewer/',
+      });
+      file = `${safe(title.replace(/ · .*$/, ''))} ${A.label} vs ${B.label} diff.pdf`;
+    } else {
+      specs.push(...textChangeSpecs(B.doc, al, al.changes.filter(vis)));
+      for (const m of figs) {
+        const st = statusOf(m);
+        if (st === 'identical' || st === 'pending') continue;
+        const ob = m.b !== null ? B.doc.objects[m.b] : null;
+        const oa = m.a !== null ? A.doc.objects[m.a] : null;
+        const name = (ob ?? oa)?.number ? `Figure ${(ob ?? oa)!.number}` : 'Figure';
+        if (st === 'removed' && oa) {
+          const at = anchors && mapPos(anchors, 'a', { page: oa.page, y: oa.box[1] });
+          if (at) specs.push({ page: at.page, type: 'Text', rects: [[40, at.y, 60, at.y + 20]], tone: 'del', contents: `${name} of ${A.label} was removed.` });
+          continue;
+        }
+        if (!ob) continue;
+        const states = panelStates(m, st, figStatus.get(m.id)?.diffs, 'b', ob.parts.length || 1, CHANGED_THRESHOLD);
+        (ob.parts.length ? ob.parts : [ob.box]).forEach((box, j) => {
+          const s2 = states[j];
+          if (s2 === 'same' || s2 === 'pending') return;
+          const panel = ob.parts.length > 1 ? ` panel (${'abcdefghijklmnopqrstuvwxyz'[j] ?? j + 1})` : '';
+          specs.push({ page: ob.page, type: 'Square', rects: [box], tone: s2 === 'new' ? 'ins' : 'fig', contents: st === 'added' ? `New ${name.toLowerCase()}.` : `${name}${panel}: ${s2 === 'new' ? 'new' : 'changed'} since ${A.label}.` });
+        });
+      }
+      bytes = await buildAnnotated(B.bytes, B.doc, specs, `Changes since ${A.label} (${A.name}), made with the PDF diff viewer`);
+      file = `${safe(B.name.replace(/\.pdf$/i, ''))} - changes since ${A.label}.pdf`;
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'application/pdf' }));
+    a.download = file;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  };
+
   const exportComments = useCallback(() => (B ? annotateMarkdown(commentText, resolutions, B.label) : commentText), [commentText, resolutions, B?.label]);
 
   const visibleChange = useCallback((c: Alignment['changes'][number]) => changeVisible(c, filters), [filters]);
@@ -363,15 +673,15 @@ export function App() {
   const marksA = useMemo(() => {
     if (!al || !A?.doc) return new Map();
     const m = sideMarks(A.doc, al, 'a', visibleChange);
-    if (figVisible) addFigureMarks(m, A.doc, figs, statusOf, 'a');
+    if (figVisible) addFigureMarks(m, A.doc, figs, figInfo, 'a', CHANGED_THRESHOLD);
     return m;
-  }, [al, A?.doc, visibleChange, figs, statusOf, figVisible]);
+  }, [al, A?.doc, visibleChange, figs, figInfo, figVisible]);
   const marksB = useMemo(() => {
     if (!al || !B?.doc) return new Map();
     const m = sideMarks(B.doc, al, 'b', visibleChange);
-    if (figVisible) addFigureMarks(m, B.doc, figs, statusOf, 'b');
+    if (figVisible) addFigureMarks(m, B.doc, figs, figInfo, 'b', CHANGED_THRESHOLD);
     return m;
-  }, [al, B?.doc, visibleChange, figs, statusOf, figVisible]);
+  }, [al, B?.doc, visibleChange, figs, figInfo, figVisible]);
 
   const openCompare = useCallback(
     (matchId: number) => {
@@ -385,19 +695,28 @@ export function App() {
         title: (oa && ob && oa.number !== ob.number ? `Figure ${oa.number} → ${ob.number}` : `Figure ${(ob ?? oa)?.number ?? ''}`).trim(),
         aLabel: A.label,
         bLabel: B.label,
-        pairs: parts.map((p, i) => ({
-          label: parts.length > 1 ? `Panel (${letters[i] ?? i + 1})` : 'Figure',
-          a: oa && p.a !== null ? { pdf: A.pdf!, page: oa.page, rect: oa.parts[p.a] ?? oa.box } : null,
-          b: ob && p.b !== null ? { pdf: B.pdf!, page: ob.page, rect: ob.parts[p.b] ?? ob.box } : null,
-        })),
+        pairs: parts.map((p, i) => {
+          const d = figStatus.get(m.id)?.diffs?.[i];
+          const status: PanelState = p.a === null ? 'new' : p.b === null ? 'removed' : p.sameHash ? 'same' : d === undefined ? 'pending' : d === null || d > CHANGED_THRESHOLD ? 'changed' : 'same';
+          const letter = letters[(p.b ?? p.a) ?? i] ?? String(i + 1);
+          return {
+            label: parts.length > 1 ? `Panel (${letter})` : 'Figure',
+            status,
+            diff: d ?? (p.sameHash ? 0 : null),
+            a: oa && p.a !== null ? { pdf: A.pdf!, page: oa.page, rect: oa.parts[p.a] ?? oa.box } : null,
+            b: ob && p.b !== null ? { pdf: B.pdf!, page: ob.page, rect: ob.parts[p.b] ?? ob.box } : null,
+          };
+        }),
       });
     },
-    [figs, A, B],
+    [figs, A, B, figStatus],
   );
 
   const select = useCallback(
     (key: string) => {
       if (!al || !A?.doc || !B?.doc) return;
+      // Navigation scrolls both panes itself; do not let one drag the other.
+      leader.current = { side: null, until: 0, down: false };
       setSelected(key);
       if (key.startsWith('c')) {
         const r = resolutions.find((x) => x.item.id === +key.slice(1));
@@ -416,7 +735,7 @@ export function App() {
         ctlB.scrollTo({ page: c.bPage, y: (c.bBox[1] + c.bBox[3]) / 2 }, true, [c.bBox[0], c.bBox[2]]);
         return;
       }
-      const m = figs.find((x) => x.id === +key.slice(1));
+      const m = (key.startsWith('r') ? objMatches : figs).find((x) => x.id === +key.slice(1));
       if (!m) return;
       const oa = m.a !== null ? A.doc.objects[m.a] : null;
       const ob = m.b !== null ? B.doc.objects[m.b] : null;
@@ -425,7 +744,7 @@ export function App() {
       const other = oa && !ob ? anchors && mapPos(anchors, 'a', { page: oa.page, y: oa.box[1] }) : !oa && ob ? anchors && mapPos(anchors, 'b', { page: ob.page, y: ob.box[1] }) : null;
       if (other) (oa ? ctlB : ctlA).scrollTo(other, true);
     },
-    [al, figs, anchors, A?.doc, B?.doc, ctlA, ctlB, resolutions, roundOverride, autoRounds],
+    [al, figs, objMatches, anchors, A?.doc, B?.doc, ctlA, ctlB, resolutions, roundOverride, autoRounds],
   );
 
   const onMarkClick = useCallback(
@@ -436,13 +755,26 @@ export function App() {
     [select, openCompare],
   );
 
+  // Synchronised scrolling: only the pane the user is actually scrolling leads.
+  // The follower's own scroll events are ignored, so the panes never push each other.
+  const leader = useRef<{ side: Side | null; until: number; down: boolean }>({ side: null, until: 0, down: false });
+  const onUserInput = (side: Side, kind: InputKind) => {
+    const now = performance.now();
+    if (kind === 'up') leader.current = { side: leader.current.side, until: now + 400, down: false };
+    else leader.current = { side, until: now + 400, down: kind === 'down' };
+  };
   const onScroll = (side: Side) => {
+    scheduleSave();
+    const L = leader.current;
+    const now = performance.now();
+    if (L.side !== side || (!L.down && now > L.until)) return;
+    // Smooth-scroll animations continue after the last wheel event.
+    L.until = Math.max(L.until, now + 150);
     if (!sync || !anchors) return;
     const [from, to] = side === 'a' ? [ctlA, ctlB] : [ctlB, ctlA];
-    if (from.isQuiet()) return;
     const pos = from.centerPos();
     const target = pos && mapPos(anchors, side, pos);
-    if (target) to.scrollTo(target);
+    if (target) to.setCenter(target);
   };
 
   // Keyboard: j/n next change, k/p previous.
@@ -482,7 +814,23 @@ export function App() {
       onDrop={onDrop}
     >
       <header class="top">
-        <h1>PDF diff</h1>
+        <h1>
+          <button class="home" title="All comparisons / start a new one" onClick={newComparison} disabled={!versions.length}>
+            PDF diff
+          </button>
+        </h1>
+        {wsMeta && versions.length > 0 && (
+          <button
+            class="ws-title"
+            title="Rename this comparison"
+            onClick={() => {
+              const t = prompt('Name of this comparison', wsMeta.title);
+              if (t && t.trim()) setWsMeta({ ...wsMeta, title: t.trim(), custom: true });
+            }}
+          >
+            {wsMeta.title} ✎
+          </button>
+        )}
         <div class="versions">
           {versions.map((v) => (
             <span key={v.id} class={`vchip ${v.error ? 'err' : ''}`} title={v.error ?? v.name}>
@@ -561,21 +909,47 @@ export function App() {
           </div>
         )}
         <div class="view">
-          <label class="sync">
-            <input type="checkbox" checked={sync} onChange={(e) => setSync(e.currentTarget.checked)} /> Sync scroll
-          </label>
-          <button class={`btn ${zoom === null ? 'on' : ''}`} title="Fit page width" onClick={() => setZoom(null)}>
-            Fit
+          {al && (
+            <button class="btn" title="Export the comparison as a PDF to send to others" onClick={() => setExportOpen(true)}>
+              ⤓ Export
+            </button>
+          )}
+          <button
+            class="btn"
+            title="Colour theme: follow the system, light or dark"
+            onClick={() => setTheme((t) => (t === 'auto' ? 'light' : t === 'light' ? 'dark' : 'auto'))}
+          >
+            {theme === 'auto' ? '◐ Auto' : theme === 'light' ? '☀ Light' : '☾ Dark'}
           </button>
-          <button class="btn icon" title="Zoom out" onClick={() => setZoom(Math.max(0.3, +(scale / 1.15).toFixed(2)))}>
-            −
-          </button>
-          <span class="zoom">{Math.round(scale * 100)}%</span>
-          <button class="btn icon" title="Zoom in" onClick={() => setZoom(Math.min(4, +(scale * 1.15).toFixed(2)))}>
-            +
-          </button>
+          {versions.length > 0 && (
+            <label class="sync">
+              <input type="checkbox" checked={sync} onChange={(e) => setSync(e.currentTarget.checked)} /> Sync scroll
+            </label>
+          )}
+          {versions.length > 0 && (
+            <>
+              <button class={`btn ${zoom === null ? 'on' : ''}`} title="Fit page width" onClick={() => setZoom(null)}>
+                Fit
+              </button>
+              <button class="btn icon" title="Zoom out" onClick={() => setZoom(Math.max(0.3, +(scale / 1.15).toFixed(2)))}>
+                −
+              </button>
+              <span class="zoom">{Math.round(scale * 100)}%</span>
+              <button class="btn icon" title="Zoom in" onClick={() => setZoom(Math.min(4, +(scale * 1.15).toFixed(2)))}>
+                +
+              </button>
+            </>
+          )}
         </div>
       </header>
+      {storageNote && (
+        <div class="storage-note" role="status">
+          {storageNote}{' '}
+          <button class="link" onClick={() => setStorageNote(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {versions.length === 0 ? (
         <main class="welcome">
@@ -595,15 +969,60 @@ export function App() {
               <button
                 class="link"
                 onClick={async () => {
+                  if (!confirm('Remove all saved comparisons, stored PDFs and cached analyses from this browser?')) return;
                   await clearCache();
+                  await clearWorkspaces().catch(() => {});
                   storageSet('pdfdiff.comments', '');
                   setCommentText('');
+                  setRecent([]);
                 }}
               >
                 Clear stored data
               </button>
             </p>
             <p class="small">Keys: j/n next change, k/p previous; in the figure comparison 1–4 switch views, Esc closes.</p>
+            {recent.length > 0 && (
+              <section class="recent">
+                <h3>Recent comparisons</h3>
+                <ul>
+                  {recent.map((w) => (
+                    <li key={w.id}>
+                      <button class="link title" onClick={() => restore(w)}>
+                        {w.title}
+                      </button>
+                      <span class="small">
+                        {w.versions.map((v) => v.label).join(', ')} · {new Date(w.updated).toLocaleString()}
+                      </span>
+                      <span class="acts">
+                        <button
+                          class="btn icon"
+                          title="Rename"
+                          onClick={async () => {
+                            const t = prompt('Name of this comparison', w.title);
+                            if (!t || !t.trim()) return;
+                            await saveWorkspace({ ...w, title: t.trim(), customTitle: true }).catch(() => {});
+                            setRecent(await listWorkspaces().catch(() => []));
+                          }}
+                        >
+                          ✎
+                        </button>
+                        <button
+                          class="btn icon"
+                          title="Delete this saved comparison"
+                          onClick={async () => {
+                            if (!confirm(`Delete “${w.title}”?`)) return;
+                            await deleteWorkspace(w.id).catch(() => {});
+                            setRecent(await listWorkspaces().catch(() => []));
+                          }}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
           </div>
         </main>
       ) : (
@@ -643,6 +1062,24 @@ export function App() {
                 onCompareFrom={(id) => {
                   setPairChosen(true);
                   setLeft(id);
+                }}
+                done={done}
+                toggleDone={(k) =>
+                  setDone((d) => {
+                    const n = new Set(d);
+                    if (n.has(k)) n.delete(k);
+                    else n.add(k);
+                    return n;
+                  })
+                }
+                onDelete={(item) => {
+                  setUndo({ text: commentText, label: 'Comment deleted' });
+                  setCommentText(removeItem(commentText, item));
+                }}
+                onClearAll={() => {
+                  setUndo({ text: commentText, label: 'Comments removed' });
+                  setCommentText('');
+                  setRoundOverride(new Map());
                 }}
               />
             ) : A && B ? (
@@ -685,7 +1122,9 @@ export function App() {
                       selected={selected}
                       control={i === 0 ? ctlA : ctlB}
                       onMarkClick={onMarkClick}
+                      maxWidth={zoom === null ? fitWidth : null}
                       onScroll={() => onScroll(i === 0 ? 'a' : 'b')}
+                      onUserInput={(k) => onUserInput(i === 0 ? 'a' : 'b', k)}
                     />
                   ) : (
                     <div class="pane loading">{v.error ?? 'Opening…'}</div>
@@ -698,6 +1137,23 @@ export function App() {
       )}
       {dragging && <div class="dropmask">Drop PDFs to add them</div>}
       {compare && <CompareModal req={compare} onClose={() => setCompare(null)} />}
+      {exportOpen && A && B && (
+        <ExportDialog aLabel={A.label} bLabel={B.label} hasComments={resolutions.length > 0} onExport={runExport} onClose={() => setExportOpen(false)} />
+      )}
+      {undo && (
+        <div class="toast" role="status">
+          {undo.label}.{' '}
+          <button
+            class="link"
+            onClick={() => {
+              setCommentText(undo.text);
+              setUndo(null);
+            }}
+          >
+            Undo
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -742,4 +1198,27 @@ function storageSet(key: string, value: string): void {
   } catch {
     // Storage unavailable: the comments just are not remembered.
   }
+}
+
+const LETTERS = 'abcdefghijklmnopqrstuvwxyz';
+
+/** "(b), (d) changed · (e) new · (c) removed", using the panel letters of each version. */
+function panelSummary(m: ObjectMatch, diffs: (number | null)[] | undefined): string {
+  const nb = Math.max(0, ...m.parts.map((p) => (p.b ?? -1) + 1));
+  const na = Math.max(0, ...m.parts.map((p) => (p.a ?? -1) + 1));
+  const sb = panelStates(m, 'changed', diffs, 'b', nb, CHANGED_THRESHOLD);
+  const sa = panelStates(m, 'changed', diffs, 'a', na, CHANGED_THRESHOLD);
+  const list = (states: PanelState[], want: PanelState) =>
+    states
+      .map((st, i) => (st === want ? `(${LETTERS[i] ?? i + 1})` : ''))
+      .filter(Boolean)
+      .join(', ');
+  const parts = [
+    [list(sb, 'changed'), 'changed'],
+    [list(sb, 'new'), 'new'],
+    [list(sa, 'removed'), `removed (old numbering)`],
+  ]
+    .filter(([l]) => l)
+    .map(([l, w]) => `${l} ${w}`);
+  return parts.length ? parts.join(' · ') : 'The graphics differ.';
 }

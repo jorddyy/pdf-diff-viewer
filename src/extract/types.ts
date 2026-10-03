@@ -87,6 +87,8 @@ export interface Section {
 export interface PageInfo {
   width: number;
   height: number;
+  /** Viewport transform at scale 1: PDF user space → these coordinates (handles /Rotate). */
+  transform: [number, number, number, number, number, number];
   /** Graphics regions found in the content stream (Form XObjects, images). */
   graphics: Rect[];
   /** Fingerprint per graphic ('' when unknown): equal fingerprints mean identical figures. */

@@ -292,9 +292,11 @@ select {
 }
 
 .pane {
+  position: relative;
   flex: 1;
   overflow: auto;
   min-height: 0;
+  outline: none;
 }
 
 .pane.loading {
@@ -309,8 +311,6 @@ select {
   align-items: center;
   width: max-content;
   min-width: 100%;
-  padding-left: 14px;
-  padding-right: 14px;
 }
 
 .page {
@@ -332,22 +332,42 @@ select {
   inset: 0;
 }
 
+/* Page number in the gap above the page (inside the page width: no overflow). */
 .pno {
   position: absolute;
-  right: -2px;
-  top: 2px;
-  transform: translateX(100%);
+  right: 0;
+  top: -15px;
   font-size: 10px;
+  line-height: 14px;
   color: var(--muted);
-  padding-left: 3px;
+}
+
+.page.over-mark,
+.page.over-mark .textLayer span {
+  cursor: pointer;
 }
 
 /* Highlights on the pages */
 .mk {
   position: absolute;
   border-radius: 2px;
-  cursor: pointer;
+  pointer-events: none;
   mix-blend-mode: multiply;
+}
+
+.mk-label {
+  position: absolute;
+  left: -2px;
+  top: -2px;
+  transform: translateY(-100%);
+  font-size: 10px;
+  line-height: 13px;
+  font-weight: 700;
+  padding: 0 4px;
+  border-radius: 3px;
+  color: #fff;
+  background: var(--num-strong);
+  white-space: nowrap;
 }
 
 .mk.del {
@@ -452,6 +472,7 @@ select {
   display: block;
   width: 100%;
   text-align: left;
+  user-select: text;
   border: 0;
   border-left: 3px solid transparent;
   background: none;
@@ -583,7 +604,7 @@ select {
   }
 }
 
-/* Figures */
+/* Figures: one outline per panel, coloured by its state */
 .mk.fig {
   background: none;
   mix-blend-mode: normal;
@@ -591,12 +612,25 @@ select {
   border-radius: 4px;
 }
 
-.mk.fig.added {
+.mk.fig.same {
+  border: 1px dashed var(--ren-strong);
+  opacity: 0.55;
+}
+
+.mk.fig.new {
   border-color: var(--ins-strong);
+}
+
+.mk.fig.new .mk-label {
+  background: var(--ins-strong);
 }
 
 .mk.fig.removed {
   border-color: var(--del-strong);
+}
+
+.mk.fig.removed .mk-label {
+  background: var(--del-strong);
 }
 
 .mk.fig.pending {
@@ -904,4 +938,258 @@ code {
 .btn.on {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.pstate {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--num-strong);
+}
+
+.pstate.same {
+  color: var(--ren-strong);
+}
+
+.pstate.new {
+  color: var(--ins-strong);
+}
+
+.pstate.removed {
+  color: var(--del-strong);
+}
+
+/* pdf.js text layer (selectable, invisible text over the page), adapted from
+   pdfjs-dist/web/pdf_viewer.css (Apache-2.0). */
+.textLayer {
+  color-scheme: only light;
+  position: absolute;
+  text-align: initial;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 2;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.textLayer .markedContent {
+  display: contents;
+}
+
+.textLayer ::selection {
+  background: rgb(0 0 255 / 0.25);
+  background: color-mix(in srgb, AccentColor, transparent 50%);
+  color: transparent;
+}
+
+.textLayer.selectionRendering ::selection {
+  background: transparent;
+}
+
+.textLayer br::selection {
+  background: transparent;
+}
+
+.textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+}
+
+.textLayer.selecting .endOfContent {
+  top: 0;
+}
+
+.overlay {
+  z-index: 1;
+}
+
+/* Comment management */
+.done-box {
+  margin: 0 2px 0 0;
+  align-self: center;
+}
+
+.chg.cmt.done {
+  opacity: 0.55;
+}
+
+.chg.cmt.done .snip.new {
+  text-decoration: line-through;
+  text-decoration-color: var(--muted);
+}
+
+.chg .x.del {
+  margin-left: 4px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+  visibility: hidden;
+}
+
+.chg:hover .x.del,
+.chg:focus-within .x.del {
+  visibility: visible;
+}
+
+.btn.danger:hover {
+  border-color: var(--del-strong);
+  color: var(--del-strong);
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  background: var(--text);
+  color: var(--bg);
+  padding: 8px 14px;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
+  z-index: 20;
+}
+
+.toast .link {
+  color: var(--bg);
+  font-weight: 700;
+}
+
+/* Saved comparisons */
+.top h1 .home {
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 700;
+  padding: 0;
+  cursor: pointer;
+}
+
+.top h1 .home:disabled {
+  cursor: default;
+}
+
+.ws-title {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0;
+}
+
+.ws-title:hover {
+  color: var(--text);
+}
+
+.recent {
+  text-align: left;
+  margin-top: 22px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.recent h3 {
+  font-size: 14px;
+  margin: 0 0 6px;
+}
+
+.recent ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.recent li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  flex-wrap: wrap;
+}
+
+.recent .title {
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.recent .acts {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.storage-note {
+  background: var(--chip);
+  color: var(--text);
+  padding: 4px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* Export dialog */
+.modal.export {
+  max-width: 560px;
+}
+
+.choice {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.choice span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.check {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 13px;
 }

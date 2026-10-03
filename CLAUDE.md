@@ -41,10 +41,15 @@ Browser tests (puppeteer-core, no bundled browser):
 ```bash
 npm run e2e -- <url> <out-dir> old.pdf new.pdf            # screenshots + timings
 npm run e2e:comments -- <url> <out-dir> review.md a.pdf b.pdf [...]
+npx tsx scripts/e2e-viewer.ts <url> <out-dir> old.pdf new.pdf       # theme, sync scroll, landscape, selection, panels (PASS/FAIL)
+npx tsx scripts/e2e-session.ts <url> <out-dir> review.md a.pdf b.pdf # comments done/delete/undo, reload restore, recent list (PASS/FAIL)
+npx tsx scripts/e2e-export.ts <url> <out-dir> old.pdf new.pdf       # writes export-side.pdf / export-annotated.pdf
 # env: BROWSER=firefox, DARK=1 (Chromium), FIGURE="Figure 32", PICK="L477", WAIT=6000, HISTORY=1
 ```
 
-- `<url>` can be `http://localhost:5173/`, `file://$PWD/dist/index.html` or the live site.
+- `<url>` can be `http://localhost:5173/`, `npx vite preview` (production build over http, like Pages), `file://$PWD/dist/index.html` or the live site.
+- Each puppeteer run starts with a fresh browser profile, so saved comparisons start empty.
+- Count annotations in exported PDFs with pdf.js (`page.getAnnotations()`); a grep of the file finds nothing because pdf-lib writes object streams.
 - Browsers are the snaps: `/snap/bin/chromium` and `/snap/bin/firefox`. The
   chrome-devtools MCP cannot find Chrome on this machine; use these scripts.
 - Snap Firefox cannot see `/tmp`, so the scripts put its profile in
@@ -71,7 +76,9 @@ scripts and tests (`scripts/node-pdf.ts` provides pdf.js legacy build + zlib).
 | Objects | `src/align/objects.ts` | figure/table/equation matching via caption-token votes, then fingerprints, then number, then same-page position; section matching |
 | Figures | `src/figures/compare.ts` | render once per page, crop panels, register (global shift), ink-difference ratio > `CHANGED_THRESHOLD` = changed |
 | Comments | `src/comments/` | `parse.ts` (Markdown → items + refs + snippets), `assign.ts` (round → version), `resolve.ts` (ref → location + status in target), `export.ts` (annotated Markdown) |
-| UI | `src/app.tsx`, `src/ui/*` | Preact. Panes render pages lazily (IntersectionObserver), overlays are absolutely positioned marks keyed `t<change>` / `f<figure match>` / `c<comment>` |
+| UI | `src/app.tsx`, `src/ui/*` | Preact. Panes render pages lazily (IntersectionObserver) with a pdf.js `TextLayer` (selectable text, browser find). Marks are drawn under the text layer with `pointer-events: none`; a click on a page hit-tests them. Keys: `t<change>`, `f<figure match>`, `r<renumbered object>`, `c<comment>` |
+| Saved comparisons | `src/pdf/workspaces.ts` | IndexedDB: PDFs by SHA-256 plus a workspace per comparison (pair, filters, zoom, scroll, comments, round overrides, done ticks). Auto-saved (debounced), the newest is restored on load, the start page lists them (max 15) |
+| Export | `src/export/` | `@pdfme/pdf-lib` (maintained pdf-lib fork). `sideBySide.ts`: old/new pages embedded as vector via the stored viewport transform, viewer marks redrawn, summary pages with links. `annotated.ts`: new PDF + Highlight/Caret/Square/Text annotations (viewer coords → user space by inverting the viewport transform). `pairing.ts`: which old page goes next to each new page |
 
 Key decisions (and why):
 
@@ -83,6 +90,9 @@ Key decisions (and why):
   visually instead.
 - **Fingerprints first, rendering only when needed.** Most figures are
   byte-identical between versions; only the rest are rendered.
+- **Float and equation numbers are placeholders in the alignment** (`tokens.ts`). The captions `Figure 35:` and equation numbers `(13)` would otherwise anchor wrong figures when everything shifted by one. Renumbering is reported from `matchObjects` instead (`r…` entries).
+- **Sync scroll is driven by input, not by scroll events.** Wheel, keys, pointer or touch on a pane makes it the leader (`onUserInput`); scroll events of the other pane are ignored, so panes cannot push each other. Navigation (`select`) clears the leader. Mapping is piecewise linear in continuous document coordinates over a strictly increasing anchor chain (`ui/sync.ts`).
+- **Fit to width uses the median page width**; pages wider than the pane (landscape) get their own scale (`PaneControl.scales`).
 - **Comment status = the leading reference's status.** In "L242: … like
   Fig. 2", the figure is incidental context.
 - **Round coupling** (`assign.ts`) scores each version by quoted snippets found
@@ -119,6 +129,12 @@ Key decisions (and why):
   heading. Otherwise it is `numeric`; those matter (changed results).
 - **Moves:** an equal run must be ≥ 10 tokens with ≥ 6 real words. Otherwise
   shared formulas like "B0 → D−π+" create false moves.
+- **Number classification** is `classifyPair()` in `align.ts`. Only whole numbers in reference positions are `renumber`; decimals or values inside expressions are always `numeric`. Example: `(1.23 ± 0.04)` → `(1.31 ± 0.05)` must be a number change.
+- **Rotated pages:** orientation comes from `text transform × viewport transform` (`words.ts`). `/Rotate 90` landscape tables are upright on screen but rotated in PDF space.
+- **Table superscripts** attach by their *start* x, with the row growing as pieces join (`lines.ts`). Unanchored text rows count as main rows in numbered documents too, so tables build identically with and without line numbers.
+- **Captions** ending in "." need caption text and a caption font or nearby graphics (`captionStart()`). "Fig. 23." can start a body line after a wrap.
+- **Cropped plots** keep their titles as invisible text just outside the graphic. Small text within 12 pt of a graphic is excluded (`document.ts`).
+- **Standard PDF fonts** only cover WinAnsi; `export/text.ts` spells out Greek letters and arrows for the summary pages. Annotation contents use UTF-16 (`PDFHexString.fromText`), so they need no sanitising.
 - **Fit to width:** the default zoom is `null` (fit page width). With fixed
   zoom, line ends can be off-screen; `PaneControl.scrollTo` also scrolls
   horizontally to the target.
@@ -135,6 +151,7 @@ Key decisions (and why):
   hook for glyph-map learning or OCR.
 - Page analysis of 100 pages takes ~7–10 s; text extraction (pdf.js
   `getTextContent`) is now the bulk.
+- The single-file build is ~2.3 MB (786 kB gzip) since pdf-lib was added.
 
 ## Conventions
 

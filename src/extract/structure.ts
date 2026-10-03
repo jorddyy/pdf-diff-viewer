@@ -10,7 +10,7 @@ export interface OutlineEntry {
   y: number | null;
 }
 
-const CAPTION_RE = /^(Figure|Fig\.|Table)\s+([A-Z]?\d+(?:\.\d+)?)\s*[:.]/;
+const CAPTION_RE = /^(Figure|Fig\.|Table)\s+((?:[A-Z]\.?)?\d+(?:\.\d+)?)\s*([:.])/;
 const EQNUM_RE = /^\(((?:[A-Z]\.)?\d+[a-z]?)\)[.,]?$/;
 const SECNUM_RE = /^(?:[A-Z]|\d+)(?:\.\d+)*\.?$/;
 
@@ -114,9 +114,10 @@ export function markObjects(doc: DocModel): void {
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
       if (l.kind !== 'body') continue;
-      const m = CAPTION_RE.exec(normalizeToken(l.text));
-      if (!m) continue;
       if (doc.hasLineNumbers && l.num !== null) continue; // a sentence starting with "Table 3."
+      const near = (r: Rect) => r[1] - 60 <= l.box[3] && r[3] + 60 >= l.box[1];
+      const m = captionStart(normalizeToken(l.text), l.size < 0.97 * doc.bodySize, pageInfo.graphics.some(near) || pageInfo.rules.some(near));
+      if (!m) continue;
       const capLines = [l];
       for (let j = i + 1; j < lines.length; j++) {
         const n = lines[j];
@@ -127,11 +128,11 @@ export function markObjects(doc: DocModel): void {
         capLines.push(n);
       }
       i += capLines.length - 1;
-      const kind = m[1] === 'Table' ? 'table' : 'figure';
+      const kind = m.kind;
       const obj: DocObject = {
         id: -1,
         kind,
-        number: m[2],
+        number: m.number,
         page,
         box: unionAll(capLines.map((c) => c.box))!,
         parts: [],
@@ -256,6 +257,22 @@ export function markObjects(doc: DocModel): void {
     for (const lid of o.lines) doc.lines[lid].object = i;
   });
   doc.objects = objects;
+}
+
+/**
+ * Recognise a float caption at the start of a line. "Fig. 23." can also be
+ * the end of a sentence that wrapped onto a new line, so without a colon we
+ * require caption text after the label and either a caption font (smaller
+ * than the body) or a graphic or rule close by.
+ */
+export function captionStart(text: string, smallFont: boolean, nearGraphics: boolean): { kind: 'figure' | 'table'; number: string } | null {
+  const m = CAPTION_RE.exec(text);
+  if (!m) return null;
+  if (m[3] === '.') {
+    const words = text.slice(m[0].length).trim().split(/\s+/).filter(Boolean).length;
+    if (words < 4 || (!smallFont && !nearGraphics)) return null;
+  }
+  return { kind: m[1] === 'Table' ? 'table' : 'figure', number: m[2] };
 }
 
 function isNumberedEq(doc: DocModel, l: Line): boolean {

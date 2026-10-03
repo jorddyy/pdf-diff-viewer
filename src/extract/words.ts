@@ -1,5 +1,5 @@
 import type { Piece, TextQuality } from './types';
-import { apply, type Matrix } from './geometry';
+import { multiply, type Matrix } from './geometry';
 import { isSuspiciousChar, repairText } from './normalize';
 
 // Approximate Computer Modern advance widths (em) for printable ASCII, used to
@@ -65,8 +65,11 @@ export function itemsToPieces(
       pendingSpace = true;
       continue;
     }
-    const t = item.transform;
-    if (Math.abs(t[1]) > 1e-3 || Math.abs(t[2]) > 1e-3) {
+    // Orientation as seen on screen: on /Rotate 90 pages (landscape tables)
+    // upright text is rotated in PDF space, and the viewport turns it back.
+    const m = multiply(item.transform as Matrix, viewportTransform);
+    const size = Math.hypot(m[2], m[3]);
+    if (!size || Math.abs(m[1]) > 1e-3 * size || Math.abs(m[2]) > 1e-3 * size || m[0] <= 0 || m[3] >= 0) {
       pendingSpace = true;
       continue;
     }
@@ -75,9 +78,9 @@ export function itemsToPieces(
       quality.glyphs++;
       if (isSuspiciousChar(ch)) quality.suspicious++;
     }
-    const size = Math.abs(t[3]) || Math.abs(t[0]);
-    const [x, base] = apply(viewportTransform, t[4], t[5]);
-    const width = item.width * Math.abs(viewportTransform[0] || 1);
+    const x = m[4];
+    const base = m[5];
+    const width = item.width * Math.hypot(viewportTransform[0], viewportTransform[1]);
     const style = styles[item.fontName] ?? {};
     const ascent = style.ascent && style.ascent > 0 ? style.ascent : 0.75;
     const descent = style.descent && style.descent < 0 ? -style.descent : 0.25;

@@ -37,6 +37,10 @@ export interface CommentItem {
   snippets: string[];
   start: number;
   end: number;
+  /** Whole source lines of the item, including a quoted comment and reply: [start, end). */
+  span: [number, number];
+  /** Stable identity (round + text), e.g. for "done" ticks. */
+  key: string;
 }
 
 export interface ParsedComments {
@@ -91,6 +95,9 @@ export function parseComments(md: string): ParsedComments {
     if (round < 0 && !refs.length && !quotedRefs.length && !/review|comment|general/i.test(section)) return;
     if (!body && !c.quoted.length) return;
     const all = c.parts.length ? c.parts : c.quoted;
+    const offsets = [...c.quoted, ...c.reply, ...c.parts].map((l) => [l.start, l.start + l.text.length]);
+    const first = lineAt(Math.min(...offsets.map((o) => o[0])));
+    const last = lineAt(Math.max(...offsets.map((o) => o[1])));
     items.push({
       id: items.length,
       text: stripMarkers(body),
@@ -104,7 +111,20 @@ export function parseComments(md: string): ParsedComments {
       snippets: [...findSnippets(c.quoted.map((l) => l.text).join('\n')), ...findSnippets(body)],
       start: all[0].start,
       end: all[all.length - 1].start + all[all.length - 1].text.length,
+      span: [first.start, Math.min(md.length, last.start + last.text.length + 1)],
+      key: stableKey(`${round}|${body}|${c.quoted.map((l) => l.text).join('\n')}`),
     });
+  };
+  /** The source line containing an offset. */
+  const lineAt = (offset: number): SrcLine => {
+    let lo = 0;
+    let hi = lines.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (lines[mid].start <= offset) lo = mid;
+      else hi = mid - 1;
+    }
+    return lines[lo];
   };
 
   for (const line of lines) {
@@ -267,4 +287,21 @@ export function findSnippets(text: string): string[] {
     void after;
   }
   return out;
+}
+
+/** Remove an item's lines from the Markdown, without leaving a run of blank lines. */
+export function removeItem(md: string, item: CommentItem): string {
+  const before = md.slice(0, item.span[0]);
+  const after = md.slice(item.span[1]);
+  return (before + after).replace(/\n{3,}/g, (m, at: number) => (at <= before.length && at + m.length >= before.length ? '\n\n' : m));
+}
+
+/** Short, stable hash of a string (FNV-1a, hex). */
+function stableKey(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16);
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { ParsedComments } from '../comments/parse';
+import type { CommentItem, ParsedComments } from '../comments/parse';
 import type { CommentResolution, RefStatus } from '../comments/resolve';
+import { clickable } from './ChangeList';
 
 export interface RoundChoice {
   title: string;
@@ -33,6 +34,11 @@ interface Props {
   /** Versions comments were written on that are not shown on the left. */
   otherSources: VersionOption[];
   onCompareFrom: (id: number) => void;
+  /** Keys of comments ticked off as done. */
+  done: Set<string>;
+  toggleDone: (key: string) => void;
+  onDelete: (item: CommentItem) => void;
+  onClearAll: () => void;
 }
 
 type Filter = 'all' | 'changed' | 'unchanged' | 'removed' | 'unresolved';
@@ -58,8 +64,11 @@ const STATUS_CLS: Record<RefStatus | 'general', string> = {
 export function CommentsPanel(p: Props) {
   const [editing, setEditing] = useState(!p.text);
   const [draft, setDraft] = useState(p.text);
+  // Follow outside changes (undo, remove all, restored comparison).
+  useEffect(() => setDraft(p.text), [p.text]);
   const [filter, setFilter] = useState<Filter>('all');
   const [showNotes, setShowNotes] = useState(false);
+  const [hideDone, setHideDone] = useState(false);
   const [copied, setCopied] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -122,7 +131,8 @@ export function CommentsPanel(p: Props) {
   }
 
   // Comments on versions that are not loaded are only counted, not listed.
-  const relevant = p.resolutions.filter((r) => !r.unassigned && (showNotes || !r.item.notes));
+  const relevant = p.resolutions.filter((r) => !r.unassigned && (showNotes || !r.item.notes) && !(hideDone && p.done.has(r.item.key)));
+  const doneCount = p.resolutions.filter((r) => !r.unassigned && p.done.has(r.item.key)).length;
   const hidden = p.resolutions.filter((r) => r.unassigned && !r.item.notes).length;
   const shown = relevant.filter((r) => filter === 'all' || r.status === filter || (filter === 'changed' && r.status === 'moved') || (filter === 'unresolved' && r.status === 'general'));
   const counts: Record<string, number> = {};
@@ -171,6 +181,11 @@ export function CommentsPanel(p: Props) {
             Notes <span class="count">{notesCount}</span>
           </button>
         )}
+        {doneCount > 0 && (
+          <button class={`chip ${hideDone ? 'on' : ''}`} title="Hide comments ticked off as done" onClick={() => setHideDone(!hideDone)}>
+            Hide done <span class="count">{doneCount}</span>
+          </button>
+        )}
       </div>
       <div class="row tools">
         <button class="btn" onClick={() => setEditing(true)}>
@@ -199,6 +214,15 @@ export function CommentsPanel(p: Props) {
             <input type="checkbox" checked={p.showHistory} onChange={(e) => p.setShowHistory(e.currentTarget.checked)} /> History
           </label>
         )}
+        <button
+          class="btn danger"
+          title="Remove all comments from this comparison"
+          onClick={() => {
+            if (confirm('Remove all comments from this comparison?')) p.onClearAll();
+          }}
+        >
+          Remove all
+        </button>
       </div>
       <div class="change-list" ref={listRef}>
         {hidden > 0 && <div class="note">{hidden} comments belong to rounds whose version is not loaded; add that PDF or pick its version above.</div>}
@@ -213,8 +237,17 @@ export function CommentsPanel(p: Props) {
           return (
             <>
               {showHead && head && <div class="sec">{head}</div>}
-              <button key={key} data-key={key} class={`chg cmt ${p.selected === key ? 'sel' : ''}`} onClick={() => p.onSelect(key)}>
+              <div key={key} data-key={key} class={`chg cmt ${p.selected === key ? 'sel' : ''}${p.done.has(it.key) ? ' done' : ''}`} {...clickable(() => p.onSelect(key))}>
                 <div class="chg-head">
+                  <input
+                    type="checkbox"
+                    class="done-box"
+                    title="Done"
+                    aria-label="Done"
+                    checked={p.done.has(it.key)}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={() => p.toggleDone(it.key)}
+                  />
                   <span class={`badge ${STATUS_CLS[r.status]}`}>{STATUS_TEXT[r.status]}</span>
                   <span class="lbl">
                     {r.refs
@@ -222,6 +255,17 @@ export function CommentsPanel(p: Props) {
                       .map((x) => `${x.source?.label ?? '?'} → ${x.target?.label ?? '—'}`)
                       .join('; ')}
                   </span>
+                  <button
+                    class="x del"
+                    title="Delete this comment (it is removed from the Markdown)"
+                    aria-label="Delete comment"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      p.onDelete(it);
+                    }}
+                  >
+                    ×
+                  </button>
                 </div>
                 {it.quoted && <div class="snip quoted">{it.quoted}</div>}
                 <div class="snip new">{it.text}</div>
@@ -235,7 +279,7 @@ export function CommentsPanel(p: Props) {
                     ))}
                   </div>
                 )}
-              </button>
+              </div>
             </>
           );
         })}

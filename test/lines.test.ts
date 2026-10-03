@@ -48,6 +48,30 @@ describe('buildLines', () => {
   });
 });
 
+describe('buildLines in tables', () => {
+  it('keeps a superscript that sticks out past the row end with its base ("× 10−3")', () => {
+    const size = 10.9;
+    const pieces = [
+      P('sigma', 100, 200, size),
+      P('21.06', 160, 200, size),
+      P('±', 200, 200, size),
+      P('1.98', 215, 200, size),
+      P('p1', 100, 213.5, size),
+      P('(−5.67', 130, 213.5, size),
+      P('±', 170, 213.5, size),
+      P('0.36)', 185, 213.5, size),
+      P('×', 220, 213.5, size),
+      P('10', 235, 213.5, size, true, 11),
+      P('−', 246.5, 209.5, 7.97, false, 6.2),
+      P('3', 252.7, 209.5, 7.97, false, 4),
+    ];
+    for (const marks of [[], [{ page: 0, base: 100, num: 7 }]]) {
+      const lines = buildLines(0, pieces, marks, 12);
+      expect(lines.map((l) => l.text)).toEqual(['sigma 21.06 ± 1.98', 'p1 (−5.67 ± 0.36) × 10−3']);
+    }
+  });
+});
+
 describe('piecesToWords', () => {
   it('splits at explicit spaces and clear gaps only', () => {
     const words = piecesToWords([P('eff', 72, 100, 12, true, 15), P('ects', 87.2, 100, 12, false, 20), P('of', 112, 100, 12, true)]);

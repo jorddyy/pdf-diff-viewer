@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
-import { parseComments, findRefs, findSnippets, type CommentRef } from '../src/comments/parse';
+import { parseComments, findRefs, findSnippets, removeItem, type CommentRef } from '../src/comments/parse';
 
 const md = fs.readFileSync(new URL('./fixtures/review.md', import.meta.url), 'utf8');
 const parsed = parseComments(md);
@@ -73,5 +73,32 @@ describe('findSnippets', () => {
     expect(findSnippets('"combiantion" → "combination"')).toEqual(['combiantion']);
     expect(findSnippets("L5: 'to altered' -> 'to be altered'")).toEqual(['to altered']);
     expect(findSnippets("it's the authors' choice")).toEqual([]);
+  });
+});
+
+describe('removeItem', () => {
+  it('removes a whole thread: quoted comment, reply and follow-up', () => {
+    const t = parsed.items.find((i) => i.quoted.includes('purpose of the control sample'))!;
+    const out = removeItem(md, t);
+    expect(out).not.toContain('purpose of the control sample');
+    expect(out).not.toContain('replaces missing simulation');
+    expect(out).not.toContain('can you refer to this');
+    expect(out).toContain('## Round 2 comments');
+    expect(out).toContain('L1220');
+    expect(out).not.toMatch(/\n{3,}/);
+  });
+
+  it('removes one line of a list and keeps the rest', () => {
+    const it2 = parsed.items.find((i) => i.text.includes('rephrase'))!;
+    const out = removeItem(md, it2);
+    expect(out).not.toContain('rephrase');
+    expect(out).toContain('L12: "teh"');
+    expect(parseComments(out).items.length).toBe(parsed.items.length - 1);
+  });
+
+  it('gives comments stable keys that survive edits elsewhere', () => {
+    const it2 = parsed.items.find((i) => i.text.includes('"teh"'))!;
+    const edited = parseComments(md.replace('rephrase', 'rephrase this sentence'));
+    expect(edited.items.find((i) => i.text.includes('"teh"'))!.key).toBe(it2.key);
   });
 });

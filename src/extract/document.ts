@@ -86,7 +86,7 @@ export async function extractDocument(
           graphics = graphics.filter((r) => keepGraphic(r, viewport.width, viewport.height));
           graphicHashes = graphics.map(() => '');
         }
-        pages[p] = { width: viewport.width, height: viewport.height, graphics, graphicHashes, rules };
+        pages[p] = { width: viewport.width, height: viewport.height, transform: vt, graphics, graphicHashes, rules };
         page.cleanup();
         opts.onProgress?.(++done, pdf.numPages);
       }
@@ -126,7 +126,10 @@ export async function extractDocument(
       if (ln.pieces.has(p)) return false;
       const cx = (p.x0 + p.x1) / 2;
       const cy = (p.top + p.bottom) / 2;
-      return !graphics.some((g) => contains(g, cx, cy, 1));
+      if (graphics.some((g) => contains(g, cx, cy, 1))) return false;
+      // Small text hugging a graphic: plot titles that cropping hid but left in the file.
+      const hugging = (g: Rect) => cx >= g[0] && cx <= g[2] && ((cy < g[1] && cy >= g[1] - 12) || (cy > g[3] && cy <= g[3] + 12));
+      return !(p.size <= 0.8 * bodySize && graphics.some(hugging));
     });
     for (const raw of buildLines(page, text, ln.marks[page], bodySize)) {
       const line: Line = {

@@ -9,6 +9,8 @@ export interface Mark {
   /** Entry key: "t<change id>" for text changes, "f<match id>" for figures. */
   key: string;
   title?: string;
+  /** Small label drawn on the mark (figure panels). */
+  label?: string;
 }
 
 export type Side = 'a' | 'b';
@@ -60,27 +62,62 @@ export function sideMarks(doc: DocModel, al: Alignment, side: Side, visible: (c:
   return byPage;
 }
 
-const FIG_TITLES: Record<FigureStatus, string> = {
-  changed: 'Figure changed: click to compare',
-  added: 'New figure',
-  removed: 'Removed figure',
-  pending: 'Comparing figure…',
-  identical: 'Figure unchanged',
+export type PanelState = 'same' | 'changed' | 'new' | 'removed' | 'pending';
+
+/** State of each panel of a figure match on one side, in that side's panel order. */
+export function panelStates(m: ObjectMatch, status: FigureStatus, diffs: (number | null)[] | undefined, side: Side, nParts: number, threshold: number): PanelState[] {
+  const out: PanelState[] = new Array(nParts).fill(status === 'pending' ? 'pending' : 'same');
+  if (status === 'added') return out.fill('new');
+  if (status === 'removed') return out.fill('removed');
+  m.parts.forEach((p, k) => {
+    const idx = side === 'a' ? p.a : p.b;
+    if (idx === null || idx >= nParts) return;
+    if ((side === 'a' ? p.b : p.a) === null) out[idx] = side === 'a' ? 'removed' : 'new';
+    else if (p.sameHash) out[idx] = 'same';
+    else if (status === 'pending' || !diffs) out[idx] = 'pending';
+    else out[idx] = diffs[k] === null || diffs[k]! > threshold ? 'changed' : 'same';
+  });
+  return out;
+}
+
+const PANEL_LABEL: Record<PanelState, string> = { same: '', changed: 'changed', new: 'new', removed: 'removed', pending: '' };
+const PANEL_TITLE: Record<PanelState, string> = {
+  same: 'Panel unchanged',
+  changed: 'Panel changed: click to compare',
+  new: 'New panel',
+  removed: 'Panel not in the new version',
+  pending: 'Comparing…',
 };
 
-/** Outlines for changed, new and removed figures. */
-export function addFigureMarks(byPage: Map<number, Mark[]>, doc: DocModel, figs: ObjectMatch[], status: (m: ObjectMatch) => FigureStatus, side: Side): void {
+/** Outlines for changed, new and removed figures, one per panel with its own state. */
+export function addFigureMarks(
+  byPage: Map<number, Mark[]>,
+  doc: DocModel,
+  figs: ObjectMatch[],
+  info: (m: ObjectMatch) => { status: FigureStatus; diffs?: (number | null)[] },
+  side: Side,
+  threshold: number,
+): void {
   for (const m of figs) {
-    const st = status(m);
-    if (st === 'identical') continue;
+    const { status, diffs } = info(m);
+    if (status === 'identical') continue;
     const id = side === 'a' ? m.a : m.b;
     if (id === null) continue;
     const o = doc.objects[id];
     const parts = o.parts.length ? o.parts : [o.box];
-    for (const box of parts) {
-      let list = byPage.get(o.page);
-      if (!list) byPage.set(o.page, (list = []));
-      list.push({ box, cls: `fig ${st}`, key: `f${m.id}`, title: FIG_TITLES[st] });
-    }
+    const states = panelStates(m, status, diffs, side, parts.length, threshold);
+    let list = byPage.get(o.page);
+    if (!list) byPage.set(o.page, (list = []));
+    const whole = status === 'added' || status === 'removed';
+    parts.forEach((box, j) => {
+      const st = states[j];
+      list!.push({
+        box,
+        cls: `fig ${st}`,
+        key: `f${m.id}`,
+        title: whole ? (status === 'added' ? 'New figure' : 'Removed figure') : PANEL_TITLE[st],
+        label: whole ? (j === 0 ? (status === 'added' ? 'new figure' : 'removed') : undefined) : parts.length > 1 || st !== 'changed' ? PANEL_LABEL[st] || undefined : undefined,
+      });
+    });
   }
 }

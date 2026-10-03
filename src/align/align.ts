@@ -58,7 +58,36 @@ export interface Alignment {
 }
 
 const REF_WORD = /^(fig(ure)?s?|tab(le)?s?|eqs?|equations?|sec(tion)?s?|refs?|app(endix)?|appendices|chapters?|lines?|l)\.?$/i;
-const BRACKETED_NUM = /^[[(]?[A-Z]?\d+(\.\d+)?[a-z]?[\])]?[,.;:]?$/;
+/** Section-like number: "3", "3.2", "A.3", "12a", optionally bracketed or followed by punctuation. */
+const SECTION_NUM = /^[([]?(?:[A-Z]|\d+)(?:\.\d+)*[a-z]?[)\],.;:]*$/;
+/** Whole number (no decimals), optionally "A." prefixed, bracketed or followed by punctuation. */
+const INT_TOKEN = /^[[(]?(?:[A-Z]\.)?\d+[a-z]?[\])]?[,.;:]?$/;
+/** Citation numbers: "[23]", "[7," and "8]" in "[7, 8]". */
+const CITATION = /^(\[\d+[\],;]?[,.;:]?|\d+\][,.;:]?)$/;
+/** Equation numbers: "(13)", "(A.3)". */
+const EQ_NUMBER = /^\((?:[A-Z]\.)?\d+[a-z]?\)[,.;:]?$/;
+
+export type PairClass = 'same' | 'renumber' | 'numeric' | 'text';
+
+/**
+ * How a changed token pair differs. `prev` holds the preceding tokens of the
+ * old text, nearest first. Only whole numbers in reference positions are
+ * renumbering ("Fig. 12", "[23]", "(13)", a heading's number); every other
+ * change of digits, such as "(1.23 ± 0.04)" → "(1.31 ± 0.05)", is a number change.
+ */
+export function classifyPair(x: string, y: string, prev: string[], headingFirst: boolean): PairClass {
+  if (x === y) return 'same';
+  if (!/\d/.test(x) || !/\d/.test(y) || digitSkeleton(x) !== digitSkeleton(y)) return 'text';
+  const [p1 = '', p2 = '', p3 = ''] = prev;
+  if ((headingFirst || REF_WORD.test(p1)) && SECTION_NUM.test(x) && SECTION_NUM.test(y)) return 'renumber';
+  if (!INT_TOKEN.test(x) || !INT_TOKEN.test(y)) return 'numeric';
+  if (CITATION.test(x) && CITATION.test(y)) return 'renumber';
+  if (EQ_NUMBER.test(x) && EQ_NUMBER.test(y)) return 'renumber';
+  // Lists after a reference word: "Figs. 12 and 13", "Tables 7, 8".
+  if (/^(and|&|-|–|to|,)$/.test(p1) && INT_TOKEN.test(p2) && REF_WORD.test(p3)) return 'renumber';
+  if (/^\d+,$/.test(p1) && REF_WORD.test(p2)) return 'renumber';
+  return 'numeric';
+}
 
 export function alignDocs(A: DocModel, B: DocModel): Alignment {
   const tokensA = tokenize(A);
@@ -307,20 +336,13 @@ function classify(ctx: Ctx, ga: number[], gb: number[]): ChangeClass {
   if (ga.length !== gb.length || !ga.length) return 'text';
   let renumber = true;
   for (let k = 0; k < ga.length; k++) {
-    const x = tokensA[ga[k]].norm;
-    const y = tokensB[gb[k]].norm;
-    if (x === y) continue;
-    if (!/\d/.test(x) || !/\d/.test(y) || digitSkeleton(x) !== digitSkeleton(y)) return 'text';
-    const prev = ga[k] > 0 ? tokensA[ga[k] - 1].norm : '';
-    const prev2 = ga[k] > 1 ? tokensA[ga[k] - 2].norm : '';
-    const line = A.lines[tokensA[ga[k]].line];
-    const isRef =
-      (line.kind === 'heading' && line.words[0] === tokensA[ga[k]].words[0]) ||
-      REF_WORD.test(prev) ||
-      (/^(and|,|&|-)$/.test(prev) && /\d/.test(prev2)) ||
-      (/\d,$/.test(prev) && /^[[(]?\d/.test(x)) ||
-      (BRACKETED_NUM.test(x) && /^[[(]|[\])][,.;:]?$/.test(x));
-    if (!isRef) renumber = false;
+    const t = ga[k];
+    const prev = [1, 2, 3].map((d) => (t - d >= 0 ? tokensA[t - d].norm : ''));
+    const line = A.lines[tokensA[t].line];
+    const headingFirst = line.kind === 'heading' && line.words[0] === tokensA[t].words[0];
+    const c = classifyPair(tokensA[t].norm, tokensB[gb[k]].norm, prev, headingFirst);
+    if (c === 'text') return 'text';
+    if (c === 'numeric') renumber = false;
   }
   return renumber ? 'renumber' : 'numeric';
 }
