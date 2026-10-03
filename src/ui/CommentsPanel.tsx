@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { CommentItem, ParsedComments } from '../comments/parse';
 import type { CommentResolution, RefStatus } from '../comments/resolve';
-import { clickable } from './ChangeList';
+import { clickable, revealEntry } from './ChangeList';
 
 export interface RoundChoice {
   title: string;
@@ -17,6 +17,8 @@ export interface VersionOption {
 export type History = Map<number, { label: string; status: RefStatus | 'general' }[]>;
 
 interface Props {
+  /** Set when a comment pin or outline on a page was clicked: show that comment. */
+  reveal?: { key: string; n: number } | null;
   text: string;
   setText: (t: string) => void;
   parsed: ParsedComments | null;
@@ -76,6 +78,10 @@ export function CommentsPanel(p: Props) {
   useEffect(() => {
     if (p.selected) listRef.current?.querySelector(`[data-key="${p.selected}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [p.selected]);
+
+  useEffect(() => {
+    if (p.reveal?.key.startsWith('c')) revealEntry(listRef.current, p.reveal.key);
+  }, [p.reveal, editing]);
 
   if (editing || !p.parsed) {
     return (

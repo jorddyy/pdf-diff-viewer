@@ -1193,3 +1193,18 @@ code {
   align-items: baseline;
   font-size: 13px;
 }
+
+/* An entry revealed from a click on the page */
+.chg.flash {
+  animation: entry-flash 1.4s ease-out 1;
+}
+
+@keyframes entry-flash {
+  0%,
+  35% {
+    background: color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+  100% {
+    background: var(--chip);
+  }
+}

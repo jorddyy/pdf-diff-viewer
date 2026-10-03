@@ -747,9 +747,14 @@ export function App() {
     [al, figs, objMatches, anchors, A?.doc, B?.doc, ctlA, ctlB, resolutions, roundOverride, autoRounds],
   );
 
+  // A click on a highlight shows its entry in the sidebar (centred, flashing),
+  // also when it was already selected.
+  const [reveal, setReveal] = useState<{ key: string; n: number } | null>(null);
   const onMarkClick = useCallback(
     (key: string) => {
       select(key);
+      setTab(key.startsWith('c') ? 'comments' : 'changes');
+      setReveal((r) => ({ key, n: (r?.n ?? 0) + 1 }));
       if (key.startsWith('f')) openCompare(+key.slice(1));
     },
     [select, openCompare],
@@ -1038,6 +1043,7 @@ export function App() {
             </div>
             {tab === 'comments' ? (
               <CommentsPanel
+                reveal={reveal}
                 text={commentText}
                 setText={(t) => {
                   setCommentText(t);
@@ -1090,6 +1096,7 @@ export function App() {
                   setFilters={setFilters}
                   selected={selected}
                   onSelect={select}
+                  reveal={reveal}
                   onCompare={openCompare}
                   note={figs.some((m) => statusOf(m) === 'pending') ? 'Comparing figures in the background…' : undefined}
                 />

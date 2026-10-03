@@ -86,11 +86,13 @@ interface Props {
   setFilters: (f: Filters) => void;
   selected: string | null;
   onSelect: (key: string) => void;
+  /** Set when a highlight on a page was clicked: show that entry. */
+  reveal?: { key: string; n: number } | null;
   onCompare: (matchId: number) => void;
   note?: string;
 }
 
-export function ChangeList({ entries, filters, setFilters, selected, onSelect, onCompare, note }: Props) {
+export function ChangeList({ entries, filters, setFilters, selected, onSelect, reveal, onCompare, note }: Props) {
   const listRef = useRef<HTMLDivElement>(null);
   const counts: Record<keyof Filters, number> = { text: 0, numeric: 0, moved: 0, figures: 0, renumber: 0, toc: 0 };
   for (const e of entries) counts[entryCategory(e)]++;
@@ -100,6 +102,10 @@ export function ChangeList({ entries, filters, setFilters, selected, onSelect, o
     if (selected === null) return;
     listRef.current?.querySelector(`[data-key="${selected}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [selected]);
+
+  useEffect(() => {
+    if (reveal) revealEntry(listRef.current, reveal.key);
+  }, [reveal]);
 
   let lastSection = '\u0000';
   return (
@@ -221,4 +227,14 @@ export function clickable(activate: () => void) {
       activate();
     },
   };
+}
+
+/** Bring an entry to the middle of its list and flash it (after a click on the page). */
+export function revealEntry(list: HTMLElement | null, key: string): void {
+  const el = list?.querySelector<HTMLElement>(`[data-key="${key}"]`);
+  if (!el) return;
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el.classList.remove('flash');
+  void el.offsetWidth; // restart the animation
+  el.classList.add('flash');
 }

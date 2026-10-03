@@ -115,6 +115,31 @@ const lefts = await page.$$eval('.pane', (ps) => ps.map((p) => p.scrollLeft));
 check('no sideways jump after selecting a change', lefts.every((l) => l === 0), lefts.join(','));
 await shot('v4-change');
 
+// Clicking a highlight on the page reveals its entry in the list, also a second time.
+await page.evaluate(() => ([...document.querySelectorAll<HTMLElement>('.chg:not(.fig)')][40] ?? null)?.click());
+await sleep(1500);
+for (const attempt of [1, 2]) {
+  await page.$eval('.change-list', (l) => (l.scrollTop = 0));
+  await sleep(300);
+  const mk = await page.evaluateHandle(() => {
+    const panes = document.querySelectorAll('.pane');
+    return panes[1].querySelector('.mk.sel') ?? panes[0].querySelector('.mk.sel');
+  });
+  const mb = await (mk as any).boundingBox?.();
+  if (!mb) {
+    check(`clicking a highlight reveals its entry (${attempt})`, false, 'no selected mark on the page');
+    break;
+  }
+  await page.mouse.click(mb.x + mb.width / 2, mb.y + mb.height / 2);
+  await sleep(1200);
+  const pos = await page.evaluate(() => {
+    const list = document.querySelector('.change-list')!.getBoundingClientRect();
+    const sel = document.querySelector('.chg.sel')?.getBoundingClientRect();
+    return sel ? { rel: (sel.top + sel.height / 2 - list.top) / list.height } : null;
+  });
+  check(`clicking a highlight reveals its entry (${attempt})`, !!pos && pos.rel > 0.2 && pos.rel < 0.8, pos ? `entry at ${(100 * pos.rel).toFixed(0)}% of the list` : 'no selected entry');
+}
+
 // Figure panels: open a changed figure from the list and check panel states.
 const opened = await page.evaluate(() => {
   const entry = [...document.querySelectorAll('.chg.fig')].find((e) => e.textContent?.includes('Figure changed'));
