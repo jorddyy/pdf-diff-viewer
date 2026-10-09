@@ -710,6 +710,7 @@ select {
 
 .modal-body {
   overflow: auto;
+  min-height: 0;
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -718,6 +719,8 @@ select {
 
 .pair-view {
   margin: 0;
+  /* Never squeezed to fit: several large panels scroll inside the dialog. */
+  flex: none;
 }
 
 .pair-view figcaption {

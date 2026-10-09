@@ -319,7 +319,8 @@ function pairFloats(A: DocModel, B: DocModel, tokensA: Token[], tokensB: Token[]
   const bag = (tokens: Token[], idx: number[]) => {
     const m = new Map<string, number>();
     for (const i of idx) {
-      const n = tokens[i].norm.toLowerCase();
+      // Punctuation after a word must not make "m(D0K+)," differ from "m(D0K+).".
+      const n = tokens[i].norm.toLowerCase().replace(/^[(\[]+|[.,;:)\]]+$/g, '');
       m.set(n, (m.get(n) ?? 0) + 1);
     }
     return m;

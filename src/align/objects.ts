@@ -1,4 +1,4 @@
-import type { DocModel, ObjectKind } from '../extract/types';
+import type { DocModel, DocObject, ObjectKind } from '../extract/types';
 import { TokState, type Alignment } from './align';
 
 export type FigureStatus = 'identical' | 'changed' | 'pending' | 'added' | 'removed';
@@ -59,7 +59,14 @@ export function matchObjects(A: DocModel, B: DocModel, al: Alignment): ObjectMat
 
   const cands: { a: number; b: number; score: number }[] = [];
   for (const [a, m] of votes) {
-    for (const [b, n] of m) cands.push({ a, b, score: n / Math.max(sizeA.get(a) ?? 1, sizeB.get(b) ?? 1) });
+    for (const [b, n] of m) {
+      const sa = sizeA.get(a) ?? 1;
+      const sb = sizeB.get(b) ?? 1;
+      let score = n / Math.max(sa, sb);
+      // A caption that was reworded and extended: a good share of the old words still found in it.
+      if (score < 0.25 && n >= 5 && n / Math.min(sa, sb) >= 0.35) score = 0.25;
+      cands.push({ a, b, score });
+    }
   }
   // Byte-identical figure graphics.
   const byHash = new Map<string, number[]>();
@@ -79,10 +86,36 @@ export function matchObjects(A: DocModel, B: DocModel, al: Alignment): ObjectMat
     usedB.add(c.b);
     pairs.push([c.a, c.b, c.score]);
   }
+  // Captions rewritten so much that the alignment found little: similar wording, in order.
+  const loose: { a: number; b: number; score: number }[] = [];
+  for (const oa of A.objects) {
+    if (usedA.has(oa.id) || oa.kind === 'equation' || !oa.caption) continue;
+    for (const ob of B.objects) {
+      if (usedB.has(ob.id) || ob.kind !== oa.kind || !ob.caption) continue;
+      const s = captionSimilarity(oa, ob);
+      if (s >= 0.4) loose.push({ a: oa.id, b: ob.id, score: s - 0.05 * Math.abs(oa.page / A.numPages - ob.page / B.numPages) });
+    }
+  }
+  loose.sort((x, y) => y.score - x.score);
+  const chosen: [number, number][] = [];
+  for (const c of loose) {
+    if (usedA.has(c.a) || usedB.has(c.b)) continue;
+    usedA.add(c.a);
+    usedB.add(c.b);
+    chosen.push([c.a, c.b]);
+  }
+  // Similar captions of one series (zoomed views, ...) keep their order.
+  chosen.sort((x, y) => x[0] - y[0]);
+  const sim = (a: number, b: number) => captionSimilarity(A.objects[a], B.objects[b]) >= 0.4;
+  for (let i = 0; i < chosen.length; i++)
+    for (let j = i + 1; j < chosen.length; j++)
+      if (chosen[i][1] > chosen[j][1] && sim(chosen[i][0], chosen[j][1]) && sim(chosen[j][0], chosen[i][1]))
+        [chosen[i][1], chosen[j][1]] = [chosen[j][1], chosen[i][1]];
+  for (const [a, b] of chosen) pairs.push([a, b, 0]);
   // Same kind and number, both still unmatched.
   for (const oa of A.objects) {
     if (usedA.has(oa.id) || !oa.number) continue;
-    const ob = B.objects.find((o) => !usedB.has(o.id) && o.kind === oa.kind && o.number === oa.number);
+    const ob = B.objects.find((o) => !usedB.has(o.id) && o.kind === oa.kind && o.number === oa.number && !unrelated(oa, o));
     if (!ob) continue;
     usedA.add(oa.id);
     usedB.add(ob.id);
@@ -130,6 +163,32 @@ export function matchObjects(A: DocModel, B: DocModel, al: Alignment): ObjectMat
   out.sort((x, y) => pos(x) - pos(y));
   out.forEach((m, i) => (m.id = i));
   return out;
+}
+
+function words(s: string): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const t of s.toLowerCase().replace(/^(figure|table|fig\.)\s*\S+/, '').match(/[^\s.,;:()[\]]+/g) ?? []) m.set(t, (m.get(t) ?? 0) + 1);
+  return m;
+}
+
+/** Shared caption words (Dice); 0 when a caption is too short to tell. */
+function captionSimilarity(a: DocObject, b: DocObject): number {
+  const x = words(a.caption);
+  const y = words(b.caption);
+  const nx = [...x.values()].reduce((s, c) => s + c, 0);
+  const ny = [...y.values()].reduce((s, c) => s + c, 0);
+  if (nx < 4 || ny < 4) return 0;
+  let inter = 0;
+  for (const [k, c] of x) inter += Math.min(c, y.get(k) ?? 0);
+  return (2 * inter) / (nx + ny);
+}
+
+/** Captions of figures and tables that share (almost) nothing: the same number by coincidence. */
+function unrelated(a: DocObject, b: DocObject): boolean {
+  if (a.kind === 'equation') return false;
+  const nx = words(a.caption).size;
+  const ny = words(b.caption).size;
+  return nx >= 4 && ny >= 4 && captionSimilarity(a, b) < 0.15;
 }
 
 /** Intersection over union of two boxes. */
