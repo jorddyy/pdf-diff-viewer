@@ -184,7 +184,13 @@ export function App() {
       for (const [id, loadedHash] of activeLoads.current) if (loadedHash === hash) return id;
       const id = nextId++;
       activeLoads.current.set(id, hash);
-      for (const old of versionsRef.current) if (old.hash === hash) void old.pdf?.loadingTask.destroy();
+      for (const old of versionsRef.current) {
+        if (old.hash !== hash) continue;
+        void old.pdf?.loadingTask.destroy();
+        // A retried failed load keeps its place in the chosen pair.
+        setLeft((l) => (l === old.id ? id : l));
+        setRight((r) => (r === old.id ? id : r));
+      }
       const v: Version = { id, name, hash, bytes, pdf: null, sizes: [], doc: null, progress: 0, error: null, label: labelFromName(name) };
       setVersions((vs) => sortVersions([...vs.filter((x) => x.hash !== hash), v]));
       const fail = (error: unknown) => {
@@ -201,9 +207,11 @@ export function App() {
         let doc = await getCached(hash);
         if (doc) doc.name = name;
         else {
-          doc = await extractInBrowser(bytes, name, (d, t) => update(id, { progress: d / t }));
+          doc = await extractInBrowser(bytes, name, (d, t) => activeLoads.current.has(id) && update(id, { progress: d / t }));
           putCached(hash, doc);
         }
+        // The load may have failed (display) or been closed meanwhile; do not revive it.
+        if (!activeLoads.current.has(id)) return;
         update(id, { doc, ...resolveLabel(name, doc.label), progress: 1 });
       })().catch(fail);
       if (store) putFile(hash, bytes, name).catch(() => setStorageNote('This browser did not allow storing the PDFs; the comparison will not be restored after a reload.'));

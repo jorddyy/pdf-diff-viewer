@@ -7,6 +7,8 @@ The running version is shown next to the title in the app (hover for the commit)
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-09
+
 ### Added
 - "← Back" button (and Alt+←, mouse back button) after following a link inside the PDF.
 - **Equations** filter: edits inside display equations are their own class
@@ -26,7 +28,8 @@ The running version is shown next to the title in the app (hover for the commit)
   opening a comparison no longer leaks a late-arriving display handle.
 - Failed figure comparisons show a visible note while keeping the affected
   figures unclassified, instead of reporting false changes or an unhandled error.
-- A failed PDF can be loaded again without removing its version first.
+- A failed PDF can be loaded again without removing its version first; the
+  chosen pair keeps it, and a failed load no longer gets analysis results later.
 - Switching comparisons clears the comment undo action and pending scroll
   restoration, so they cannot affect a different comparison.
 
