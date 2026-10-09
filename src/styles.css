@@ -1354,8 +1354,9 @@ code {
 
 /* Typeset formulas in comments */
 .tex math {
-  font-size: 1.05em;
-  color: var(--text);
+  font-size: 1em;
+  color: inherit;
+  line-height: 1;
 }
 
 /* Display formulas stay in the flow of the (line-clamped) comment text */
