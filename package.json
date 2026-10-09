@@ -1,7 +1,7 @@
 {
   "name": "pdf-diff-viewer",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Side-by-side diff viewer for LHCb ANA-Notes and paper drafts, running entirely in the browser",
   "scripts": {

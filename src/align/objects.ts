@@ -167,7 +167,7 @@ export function matchObjects(A: DocModel, B: DocModel, al: Alignment): ObjectMat
 
 function words(s: string): Map<string, number> {
   const m = new Map<string, number>();
-  for (const t of s.toLowerCase().replace(/^(figure|table|fig\.)\s*\S+/, '').match(/[^\s.,;:()[\]]+/g) ?? []) m.set(t, (m.get(t) ?? 0) + 1);
+  for (const t of s.toLowerCase().replace(/^(figure|table|fig\.)\s*\S+/, '').replace(/\(\d+\)/g, ' ').match(/[^\s.,;:()[\]]+/g) ?? []) if (t.length > 1) m.set(t, (m.get(t) ?? 0) + 1);
   return m;
 }
 
@@ -185,13 +185,16 @@ function captionSimilarity(a: DocObject, b: DocObject): number {
 
 /** Figures and tables with the same number but different captions and places: a coincidence. */
 function unrelated(a: DocObject, b: DocObject, A: DocModel, B: DocModel): boolean {
-  if (a.kind === 'equation') return false;
   const nx = words(a.caption).size;
   const ny = words(b.caption).size;
+  // A short formula against a long one is not the same formula.
+  if (a.kind === 'equation' && (nx < 4) !== (ny < 4)) return true;
   if (nx < 4 || ny < 4) return false;
+  const sim = captionSimilarity(a, b);
+  // Equation numbers shift all the time, so the place says nothing: only the formula counts.
+  if (a.kind === 'equation') return sim < 0.2;
   // Same number is enough evidence only when the captions agree or the object sits at the same place.
   const moved = Math.abs(a.page / A.numPages - b.page / B.numPages);
-  const sim = captionSimilarity(a, b);
   return sim < 0.15 || (sim < 0.3 && moved > 0.04);
 }
 

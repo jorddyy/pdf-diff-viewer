@@ -1367,3 +1367,21 @@ code {
   display: inline-block;
   margin: 0;
 }
+
+/* Version next to the title; the update button appears when a newer build is deployed */
+.top .ver {
+  font-size: 11px;
+  color: var(--muted);
+  text-decoration: none;
+  align-self: center;
+}
+
+.top .ver:hover {
+  text-decoration: underline;
+}
+
+.top .btn.update {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-size: 12px;
+}

@@ -20,6 +20,7 @@ import { assignRounds } from './comments/assign';
 import { resolveComment, type CommentResolution, type ResolveContext, type VersionData } from './comments/resolve';
 import { annotateMarkdown } from './comments/export';
 import { matchSections, type SectionMatch } from './align/objects';
+import { BUILD, CHANGELOG_URL, newerBuild, type BuildInfo } from './version';
 import { ContentsPanel } from './ui/ContentsPanel';
 import { CommentsPanel, type History } from './ui/CommentsPanel';
 import type { Mark } from './ui/marks';
@@ -80,6 +81,13 @@ function sortVersions(vs: Version[]): Version[] {
 
 export function App() {
   const [versions, setVersions] = useState<Version[]>([]);
+  const [newBuild, setNewBuild] = useState<BuildInfo | null>(null);
+  useEffect(() => {
+    newerBuild().then(setNewBuild);
+    const again = () => document.visibilityState === 'visible' && newerBuild().then((b) => b && setNewBuild(b));
+    document.addEventListener('visibilitychange', again);
+    return () => document.removeEventListener('visibilitychange', again);
+  }, []);
   const [left, setLeft] = useState<number | null>(null);
   const [right, setRight] = useState<number | null>(null);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
@@ -886,6 +894,14 @@ export function App() {
             PDF diff
           </button>
         </h1>
+        <a class="ver" href={CHANGELOG_URL} target="_blank" rel="noopener" title={`Release notes · commit ${BUILD.commit}${BUILD.built ? ', built ' + BUILD.built.slice(0, 16).replace('T', ' ') + ' UTC' : ''}`}>
+          v{BUILD.version}
+        </a>
+        {newBuild && (
+          <button class="btn update" title={`Version ${newBuild.version} (${newBuild.commit}) is online. Reload to use it; saved comparisons stay.`} onClick={() => location.reload()}>
+            Update available · reload
+          </button>
+        )}
         {wsMeta && versions.length > 0 && (
           <button
             class="ws-title"

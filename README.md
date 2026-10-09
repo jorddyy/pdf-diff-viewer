@@ -19,6 +19,12 @@ notes:
   Review rounds are matched to the version they were written on automatically.
   Export the review with the new locations added after each reference.
 
+- **Navigate.** Links inside the PDF (Figure 3, Section 4.1, citations, table
+  of contents) work in both panes, shown with their PDF borders. The
+  **Contents** tab lists the sections with the number of changes in each; a
+  click shows the section in both versions. Formulas in review comments
+  (`$B^0 \to D\pi$`) are typeset.
+
 - **Export to send around.** Either a side-by-side diff PDF (old page next to
   the matching new page, changes highlighted, a linked list of all changes in
   front) or the new version with standard PDF annotations (highlights with
@@ -98,3 +104,6 @@ Broken text layers (e.g. a PDF re-printed from a browser, where ligatures and
 minus signs become private-use glyphs) are detected and flagged;
 `repairText()` in `src/extract/normalize.ts` is the hook for a future repair or
 OCR step.
+
+The version is shown next to the title; release notes are in [CHANGELOG.md](CHANGELOG.md).
+The page offers a reload when a newer build has been deployed.
