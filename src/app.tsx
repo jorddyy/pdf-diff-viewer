@@ -36,13 +36,26 @@ export interface Version {
   progress: number;
   error: string | null;
   label: string;
+  /** Version printed in the document when it differs from the file name's. */
+  titleLabel?: string | null;
 }
 
 let nextId = 1;
 
-function labelFromName(name: string): string {
+function versionInName(name: string): string | null {
   const m = /(?:^|[^a-z])v(\d+(?:[._]\d+)*)/i.exec(name);
-  return m ? `v${m[1].replace('_', '.')}` : name.replace(/\.pdf$/i, '');
+  return m ? `v${m[1].replace(/_/g, '.')}` : null;
+}
+
+function labelFromName(name: string): string {
+  return versionInName(name) ?? name.replace(/\.pdf$/i, '');
+}
+
+/** The file name wins over the title page (which may be wrong); the title page is the fallback. */
+function resolveLabel(name: string, docLabel: string): { label: string; titleLabel: string | null } {
+  const fromName = versionInName(name);
+  if (!fromName) return { label: docLabel, titleLabel: null };
+  return { label: fromName, titleLabel: docLabel !== fromName && /^v\d/.test(docLabel) ? docLabel : null };
 }
 
 function versionKey(label: string): number[] {
@@ -163,7 +176,7 @@ export function App() {
           doc = await extractInBrowser(bytes, name, (d, t) => update(id, { progress: d / t }));
           putCached(hash, doc);
         }
-        update(id, { doc, label: doc.label, progress: 1 });
+        update(id, { doc, ...resolveLabel(name, doc.label), progress: 1 });
       })().catch((e) => update(id, { error: String(e?.message ?? e) }));
       if (store) putFile(hash, bytes, name).catch(() => setStorageNote('This browser did not allow storing the PDFs; the comparison will not be restored after a reload.'));
       return id;
@@ -872,8 +885,9 @@ export function App() {
         )}
         <div class="versions">
           {versions.map((v) => (
-            <span key={v.id} class={`vchip ${v.error ? 'err' : ''}`} title={v.error ?? v.name}>
+            <span key={v.id} class={`vchip ${v.error ? 'err' : ''}`} title={v.error ?? (v.titleLabel ? `${v.name}\nThe document itself says ${v.titleLabel}` : v.name)}>
               {v.label}
+              {v.titleLabel && <span class="vwarn"> ⚠ says {v.titleLabel}</span>}
               {!v.doc && !v.error && <span class="prog" style={{ width: `${Math.round(v.progress * 100)}%` }} />}
               <button
                 class="x"

@@ -161,6 +161,11 @@ select {
   font-weight: 600;
 }
 
+.vchip .vwarn {
+  color: var(--warn, #b45309);
+  font-size: 0.85em;
+}
+
 .vchip.err {
   outline: 1px solid var(--del-strong);
 }
