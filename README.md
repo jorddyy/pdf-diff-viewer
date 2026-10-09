@@ -70,7 +70,10 @@ Open the page, drop two or more PDFs on it.
 npm install
 npm run dev          # http://localhost:5173
 npm test             # unit tests (+ sample tests when examples/ exists)
+npm run test:public  # public tests only, even when examples/ exists
+npm run test:private # local sample tests only (requires examples/)
 npm run build        # dist/index.html, a single self-contained file
+npm run e2e:smoke    # test the build in Firefox with generated, invented PDFs
 ```
 
 `dist/index.html` also works opened from disk; the standard PDF fonts
@@ -87,6 +90,34 @@ npx tsx scripts/check-samples.ts old.pdf new.pdf         # alignment statistics
 npx tsx scripts/dev/check-comments.ts review.md target.pdf v1.pdf v2.pdf ...
 npm run e2e -- http://localhost:5173/ out/ old.pdf new.pdf   # BROWSER=firefox for Firefox
 ```
+
+### Continuous integration and confidential documents
+
+GitHub Actions checks pushes to `main` and pull requests with TypeScript, public
+tests, a production build and a Firefox smoke test. The smoke test creates its
+own invented PDFs and checks text/number changes, saved comments, reload,
+worker cleanup, retrying failed loads and clearing stored data. Only successful checks on `main`
+deploy to GitHub Pages; pull requests have read-only repository permissions.
+
+The public suite also generates small PDFs in memory to check exact text and
+number changes, reflow and line numbering, reference renumbering, paragraph
+reordering and page deletion. It reopens both export formats with pdf.js to
+verify preserved text, highlight positions, deletion carets and summary links.
+These checks use the existing dependencies and take a few seconds locally.
+
+Internal notes, reviews, filenames and results derived from them must stay in
+the ignored `examples/` directory. Keep their regression tests there too, and
+run `npm run test:private` locally. Do not upload their logs, screenshots or
+exports as CI artifacts. Public CI needs no access to those files or to a
+machine that holds them. Git ignores are a convenience, not a confidentiality
+check: inspect staged changes before committing.
+
+The smoke test uses `/snap/bin/firefox` locally; set `BROWSER_PATH` to use a
+different Firefox executable. CI installs Firefox stable. Generated files and
+browser profiles go under the ignored `e2e-tmp/` directory.
+
+If figure comparison fails, the affected figures remain unclassified and a
+visible note explains how to retry; a failure is not reported as a change.
 
 ### How it works
 

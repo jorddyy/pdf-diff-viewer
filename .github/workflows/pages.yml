@@ -1,40 +1,55 @@
-name: Deploy to GitHub Pages
+name: CI and GitHub Pages
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: checks-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      # Unit tests only: the sample notes are not in the repository, so those tests skip.
-      - run: npm test
+      # Only invented fixtures; internal notes and local sample tests stay off GitHub.
+      - run: npm run test:public
       - run: npm run build
+      - name: Install Firefox
+        run: |
+          browser_path=$(npm exec -- browsers install firefox@stable --path e2e-tmp/browsers --format '{{path}}')
+          echo "BROWSER_PATH=$browser_path" >> "$GITHUB_ENV"
+      - run: npm run e2e:smoke
       - uses: actions/upload-pages-artifact@v5
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         with:
           path: dist
 
   deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

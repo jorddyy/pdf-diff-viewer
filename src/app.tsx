@@ -128,6 +128,7 @@ export function App() {
   const ctlB = useMemo(() => new PaneControl(), []);
   const fileInput = useRef<HTMLInputElement>(null);
   const versionsRef = useRef<Version[]>([]);
+  const activeLoads = useRef(new Map<number, string>());
   versionsRef.current = versions;
   const [storageNote, setStorageNote] = useState<string | null>(null);
   // The saved comparison this view belongs to.
@@ -180,12 +181,22 @@ export function App() {
   /** Load one PDF (from a drop or a saved comparison). Returns its version id. */
   const addVersion = useCallback(
     (bytes: ArrayBuffer, name: string, hash: string, store: boolean): number => {
+      for (const [id, loadedHash] of activeLoads.current) if (loadedHash === hash) return id;
       const id = nextId++;
+      activeLoads.current.set(id, hash);
+      for (const old of versionsRef.current) if (old.hash === hash) void old.pdf?.loadingTask.destroy();
       const v: Version = { id, name, hash, bytes, pdf: null, sizes: [], doc: null, progress: 0, error: null, label: labelFromName(name) };
-      setVersions((vs) => (vs.some((x) => x.hash === hash) ? vs : sortVersions([...vs, v])));
+      setVersions((vs) => sortVersions([...vs.filter((x) => x.hash !== hash), v]));
+      const fail = (error: unknown) => {
+        activeLoads.current.delete(id);
+        update(id, { error: error instanceof Error ? error.message : String(error) });
+      };
       openForDisplay(bytes)
-        .then(({ pdf, sizes }) => update(id, { pdf, sizes }))
-        .catch((e) => update(id, { error: String(e?.message ?? e) }));
+        .then(({ pdf, sizes }) => {
+          if (activeLoads.current.has(id)) update(id, { pdf, sizes });
+          else void pdf.loadingTask.destroy();
+        })
+        .catch(fail);
       (async () => {
         let doc = await getCached(hash);
         if (doc) doc.name = name;
@@ -194,7 +205,7 @@ export function App() {
           putCached(hash, doc);
         }
         update(id, { doc, ...resolveLabel(name, doc.label), progress: 1 });
-      })().catch((e) => update(id, { error: String(e?.message ?? e) }));
+      })().catch(fail);
       if (store) putFile(hash, bytes, name).catch(() => setStorageNote('This browser did not allow storing the PDFs; the comparison will not be restored after a reload.'));
       return id;
     },
@@ -207,7 +218,7 @@ export function App() {
         if (!/\.pdf$/i.test(f.name) && f.type !== 'application/pdf') continue;
         const bytes = await f.arrayBuffer();
         const hash = await sha256(bytes);
-        if (versionsRef.current.some((v) => v.hash === hash)) continue;
+        if (versionsRef.current.some((v) => v.hash === hash && !v.error)) continue;
         addVersion(bytes, f.name, hash, true);
       }
     },
@@ -233,6 +244,7 @@ export function App() {
 
   // ---- Saved comparisons: restore the last one, save every change ----
   const closeAll = () => {
+    activeLoads.current.clear();
     for (const v of versionsRef.current) v.pdf?.loadingTask.destroy();
     setVersions([]);
     alignCache.current.clear();
@@ -240,6 +252,9 @@ export function App() {
     secCache.current.clear();
     setSelected(null);
     setCompare(null);
+    setUndo(null);
+    setRepairId(null);
+    pendingScroll.current = null;
   };
 
   const restore = async (ws: Workspace) => {
@@ -410,9 +425,11 @@ export function App() {
   );
   const figs = useMemo(() => objMatches.filter((m) => m.kind === 'figure'), [objMatches]);
   const [figStatus, setFigStatus] = useState<Map<number, { status: FigureStatus; diffs: (number | null)[] }>>(new Map());
+  const [figError, setFigError] = useState<string | null>(null);
   useEffect(() => {
     setSelected(null);
     setFigStatus(new Map());
+    setFigError(null);
   }, [al, objMatches]);
 
   // Compare figures whose graphics are not byte-identical, in the background.
@@ -425,7 +442,10 @@ export function App() {
     let pa: PDFDocumentProxy | null = null;
     let pb: PDFDocumentProxy | null = null;
     (async () => {
-      [pa, pb] = await Promise.all([openForCompare(A.bytes), openForCompare(B.bytes)]);
+      const opened = await Promise.allSettled([openForCompare(A.bytes), openForCompare(B.bytes)]);
+      pa = opened[0].status === 'fulfilled' ? opened[0].value : null;
+      pb = opened[1].status === 'fulfilled' ? opened[1].value : null;
+      if (!pa || !pb) throw new Error('Could not open PDFs for figure comparison');
       for (const m of figs) {
         if (cancelled) return;
         if (m.status !== 'pending' || m.a === null || m.b === null) continue;
@@ -440,8 +460,8 @@ export function App() {
             rb = await renderRegions(pb!, ob.page, todo.map((p) => ob.parts[p.b!]), 240);
           }
         } catch {
-          ra = [];
-          rb = [];
+          if (!cancelled) setFigError('Some figures could not be compared. Their status is unknown; reopen this comparison to retry.');
+          continue;
         }
         if (cancelled) return;
         const diffs = m.parts.map((p) => {
@@ -452,9 +472,11 @@ export function App() {
         const changed = diffs.some((d) => d === null || d > CHANGED_THRESHOLD) || !m.parts.length;
         setFigStatus((prev) => new Map(prev).set(m.id, { status: changed ? 'changed' : 'identical', diffs }));
       }
-    })().finally(() => {
-      pa?.loadingTask.destroy();
-      pb?.loadingTask.destroy();
+    })().catch(() => {
+      if (cancelled) return;
+      setFigError('Figures could not be compared. Their status is unknown; reopen this comparison to retry.');
+    }).finally(async () => {
+      await Promise.allSettled([pa?.loadingTask.destroy(), pb?.loadingTask.destroy()]);
     });
     return () => {
       cancelled = true;
@@ -485,7 +507,7 @@ export function App() {
       let detail = '';
       if (status === 'changed') {
         detail = m.parts.length > 1 ? panelSummary(m, st?.diffs) : 'The graphic differs.';
-      } else if (status === 'pending') detail = 'Comparing the graphics…';
+      } else if (status === 'pending') detail = figError ? 'Comparison unavailable; change status unknown.' : 'Comparing the graphics…';
       else if (status === 'added') detail = 'New in this version.';
       else if (status === 'removed') detail = 'Not in the new version.';
       let pos: number;
@@ -520,7 +542,7 @@ export function App() {
       });
     }
     return out.sort((x, y) => x.pos - y.pos);
-  }, [al, figs, objMatches, statusOf, figStatus, anchors]);
+  }, [al, figs, objMatches, statusOf, figStatus, figError, anchors]);
 
   // ---- Review comments ----
   const parsed = useMemo(() => (commentText.trim() ? parseComments(commentText) : null), [commentText]);
@@ -960,6 +982,7 @@ export function App() {
                 title={`Remove ${v.name}`}
                 onClick={() => {
                   v.pdf?.loadingTask.destroy();
+                  activeLoads.current.delete(v.id);
                   for (const k of [...alignCache.current.keys()]) if (k.split(':').includes(String(v.id))) alignCache.current.delete(k);
                   setVersions((vs) => vs.filter((x) => x.id !== v.id));
                 }}
@@ -1228,7 +1251,7 @@ export function App() {
                   follow={followRef}
                   onCompare={openCompare}
                   onRepair={setRepairId}
-                  note={figs.some((m) => statusOf(m) === 'pending') ? 'Comparing figures in the background…' : undefined}
+                  note={figError ?? (figs.some((m) => statusOf(m) === 'pending') ? 'Comparing figures in the background…' : undefined)}
                 />
               ) : (
                 <Progress versions={[A, B]} />

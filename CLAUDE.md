@@ -25,7 +25,10 @@ Firefox the primary target.
 npm run dev            # Vite dev server (http://localhost:5173)
 npm run typecheck      # tsc --noEmit (TypeScript 7)
 npm test               # vitest: test/** and, locally, examples/**/*.test.ts (slow, ~1 min)
+npm run test:public    # test/** only, explicitly excludes examples/**
+npm run test:private   # only local examples/**/*.test.ts; fails if absent
 npm run build          # dist/index.html, single self-contained file (+ dist/standard_fonts/)
+npm run e2e:smoke      # production preview + generated synthetic PDFs in Firefox; BROWSER_PATH overrides executable
 npx tsx scripts/inspect.ts file.pdf [page]                # what extraction sees
 npx tsx scripts/check-samples.ts old.pdf new.pdf [--list N]  # alignment stats + sample changes
 npx tsx scripts/dev/list-changes.ts old.pdf new.pdf numeric|renumber|text|toc [kind]
@@ -52,6 +55,14 @@ npx tsx scripts/e2e-export.ts <url> <out-dir> old.pdf new.pdf       # writes exp
 
 - `<url>` can be `http://localhost:5173/`, `npx vite preview` (production build over http, like Pages), `file://$PWD/dist/index.html` or the live site.
 - Each puppeteer run starts with a fresh browser profile, so saved comparisons start empty.
+- `scripts/e2e-smoke.ts` generates invented PDFs under `e2e-tmp/` and runs without
+  private samples. CI runs it on pushes to `main` and pull requests. It verifies
+  text/number changes, comment persistence, retrying failed loads, worker cleanup, comparison-local
+  undo and deletion of stored data. Only `main` deploys, after checks pass.
+- `test/pipeline.test.ts` generates small PDFs in memory and checks extraction
+  through alignment (exact edits, reflow, renumbering, moves, removed pages),
+  then reopens both PDF exports to verify text, annotations and summary links.
+  It runs with `test:public` and uses no private data or extra dependencies.
 - Stop a background dev server by its port (`ss -ltnp | grep 5199`, then `kill <pid>`). Do not use `pkill -f` or `pgrep -f` with a pattern: it also matches the shell running it and kills that command.
 - Count annotations in exported PDFs with pdf.js (`page.getAnnotations()`); a grep of the file finds nothing because pdf-lib writes object streams.
 - Browsers are the snaps: `/snap/bin/chromium` and `/snap/bin/firefox`. The
@@ -115,6 +126,14 @@ Key decisions (and why):
 - **pdf.js 6 API.** `PDFDocumentProxy` has no `destroy()`; use
   `pdf.loadingTask.destroy()`. The `PDFWorker({ port })` typing is wrong, so
   cast it.
+- **Worker ownership.** pdf.js does not destroy supplied workers, and a
+  `PDFWorker` does not terminate a supplied port. `startDocument()` wraps the
+  loading task's `destroy()` to release both, including failed loads. Extraction
+  cleans up all loading tasks even if one fails; `?workers=` is capped at four.
+- Failed PDF loads release their deduplication entry; re-adding the same file
+  replaces the failed version. Failed figure comparisons stay pending with a
+  visible failure note, including rendering failures; they are never evidence
+  that a figure changed.
 - **pdf.js render `transform`** is applied in device pixels (after the viewport
   transform). `constructPath` args are `[paintOp, [pathData], minMax]`.
 - **pdf.js wraps pages that have a transparency group** in
@@ -141,6 +160,8 @@ Key decisions (and why):
   coincidental pairings with text outside the block are freed and only kept
   if nothing better is found. A real reorder (e.g. two groups of paragraphs
   swapped) is reported once, for the smaller group.
+- A delete/equal/insert sequence crossing substantial unchanged prose is a
+  move, even though the delete and insert are only two operations apart.
 - **Floats are not running text.** Caption and table lines (with a figure or table object) are aligned only against their paired float. Sync-scroll anchors skip them too.
 - **Number classification** is `classifyPair()` in `align.ts`. Only whole numbers or ranges (`Figs. 17–19`) in reference positions are `renumber`; decimals or values inside expressions are always `numeric`. Example: `(1.23 ± 0.04)` → `(1.31 ± 0.05)` must be a number change.
 - **Rotated pages:** orientation comes from `text transform × viewport transform` (`words.ts`). `/Rotate 90` landscape tables are upright on screen but rotated in PDF space.
@@ -214,5 +235,6 @@ Key decisions (and why):
   no-reply address (set in the local git config). End messages with the
   `Co-Authored-By` line given by the harness.
 - Before pushing: `npm run typecheck && npm test && npm run build`, and run the
-  e2e script in Firefox for UI changes. CI runs typecheck, tests and build
-  before deploying.
+  e2e script in Firefox for UI changes. CI runs typecheck, public tests, build
+  and the synthetic Firefox smoke test before deploying. Private sample tests
+  and any output derived from them stay local.

@@ -14,6 +14,21 @@ The running version is shown next to the title in the app (hover for the commit)
 - "Wrong pair?" / "Pair with…" on a selected figure or renumbering entry: choose
   which figure, table or equation belongs together, or none. Saved with the comparison.
 - Pushing a `v*` tag creates the GitHub release from this changelog.
+- Main-branch and pull-request CI with public tests and a Firefox smoke test using
+  invented PDFs; internal sample tests remain local.
+- Synthetic PDF integration tests for exact diff results, reflow, renumbering,
+  paragraph moves, removed pages and verification of both exported PDF formats.
+
+### Fixed
+- Swapping adjacent paragraphs is reported as a move instead of silently
+  treating the reordered text as unchanged.
+- PDF workers are released after closing documents and after failed loads;
+  opening a comparison no longer leaks a late-arriving display handle.
+- Failed figure comparisons show a visible note while keeping the affected
+  figures unclassified, instead of reporting false changes or an unhandled error.
+- A failed PDF can be loaded again without removing its version first.
+- Switching comparisons clears the comment undo action and pending scroll
+  restoration, so they cannot affect a different comparison.
 
 ### Changed
 - Figure comparison tolerates a plot that was re-rendered at a slightly different size.

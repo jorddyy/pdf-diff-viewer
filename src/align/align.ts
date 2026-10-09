@@ -405,7 +405,12 @@ function detectMoves(seg: Segment2, tokensA: Token[], aToB: Int32Array, bToA: In
     for (const [ri, n] of [...hits].sort((x, y) => y[1] - x[1])) {
       if (n < 3) break;
       const r = insRuns[ri];
-      const inPlace = Math.abs(r.op - d.op) <= 2;
+      // Adjacent paragraphs swapped produce delete/equal/insert. Crossing a
+      // substantial unchanged passage is a move, even with only three ops.
+      const crossed = ops.slice(Math.min(r.op, d.op) + 1, Math.max(r.op, d.op));
+      const crossesProse = crossed.some((op) => op.type === 'equal' && op.a1 - op.a0 >= 10 &&
+        seg.a.slice(op.a0, op.a1).filter((t) => /^[A-Za-z]{3,}[,.;:]?$/.test(tokensA[t].norm)).length >= 6);
+      const inPlace = Math.abs(r.op - d.op) <= 2 && !crossesProse;
       const sub = diffSeq(ia.subarray(d.a0, d.a1), ib.subarray(r.b0, r.b1));
       const mv: Move = { a: [], b: [] };
       for (const op of sub) {

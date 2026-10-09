@@ -12,8 +12,38 @@ export { pdfjs };
 // Opened from disk the fetches would be blocked, so pdf.js uses system fonts directly.
 const standardFontDataUrl = location.protocol === 'file:' ? undefined : new URL('standard_fonts/', document.baseURI).href;
 
-function newWorker() {
-  return new pdfjs.PDFWorker({ port: new PdfjsWorker() } as any);
+function startDocument(bytes: ArrayBuffer) {
+  const port = new PdfjsWorker();
+  const worker = new pdfjs.PDFWorker({ port } as any);
+  try {
+    const task = pdfjs.getDocument({ data: new Uint8Array(bytes.slice(0)), worker, verbosity: 0, standardFontDataUrl });
+    const destroy = task.destroy.bind(task);
+    let cleanup: Promise<void> | undefined;
+    // pdf.js does not own an explicitly supplied worker or its browser port.
+    task.destroy = () => cleanup ??= (async () => {
+      try {
+        await destroy();
+      } finally {
+        worker.destroy();
+        port.terminate();
+      }
+    })();
+    return task;
+  } catch (error) {
+    worker.destroy();
+    port.terminate();
+    throw error;
+  }
+}
+
+async function openDocument(bytes: ArrayBuffer): Promise<PDFDocumentProxy> {
+  const task = startDocument(bytes);
+  try {
+    return await task.promise;
+  } catch (error) {
+    await task.destroy().catch(() => {});
+    throw error;
+  }
 }
 
 export interface PageSize {
@@ -23,18 +53,23 @@ export interface PageSize {
 
 /** Open a PDF for display (one pdf.js worker per document) and read its page sizes. */
 export async function openForDisplay(bytes: ArrayBuffer): Promise<{ pdf: PDFDocumentProxy; sizes: PageSize[] }> {
-  const pdf = await pdfjs.getDocument({ data: new Uint8Array(bytes.slice(0)), worker: newWorker(), verbosity: 0, standardFontDataUrl }).promise;
-  const sizes: PageSize[] = [];
-  for (let p = 1; p <= pdf.numPages; p++) {
-    const vp = (await pdf.getPage(p)).getViewport({ scale: 1 });
-    sizes.push({ width: vp.width, height: vp.height });
+  const pdf = await openDocument(bytes);
+  try {
+    const sizes: PageSize[] = [];
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const vp = (await pdf.getPage(p)).getViewport({ scale: 1 });
+      sizes.push({ width: vp.width, height: vp.height });
+    }
+    return { pdf, sizes };
+  } catch (error) {
+    await pdf.loadingTask.destroy().catch(() => {});
+    throw error;
   }
-  return { pdf, sizes };
 }
 
 /** A separate handle (own worker) for background rendering, e.g. figure comparison. */
 export function openForCompare(bytes: ArrayBuffer): Promise<PDFDocumentProxy> {
-  return pdfjs.getDocument({ data: new Uint8Array(bytes.slice(0)), worker: newWorker(), verbosity: 0, standardFontDataUrl }).promise;
+  return openDocument(bytes);
 }
 
 /**
@@ -43,19 +78,20 @@ export function openForCompare(bytes: ArrayBuffer): Promise<PDFDocumentProxy> {
  */
 export async function extractInBrowser(bytes: ArrayBuffer, name: string, onProgress?: Progress): Promise<DocModel> {
   // Documents are analysed concurrently, so each gets a share of the cores.
-  const n = Number(new URLSearchParams(location.search).get('workers')) || Math.max(2, Math.min(4, Math.floor(((navigator.hardwareConcurrency || 4) - 1) / 2)));
-  const workers = Array.from({ length: n }, newWorker);
-  const handles = await Promise.all(
-    workers.map((worker) => pdfjs.getDocument({ data: new Uint8Array(bytes.slice(0)), worker, verbosity: 0, standardFontDataUrl }).promise),
-  );
+  const requested = Number(new URLSearchParams(location.search).get('workers'));
+  const n = Number.isFinite(requested) && requested > 0
+    ? Math.max(1, Math.min(4, Math.floor(requested)))
+    : Math.max(2, Math.min(4, Math.floor(((navigator.hardwareConcurrency || 4) - 1) / 2)));
+  const tasks: ReturnType<typeof startDocument>[] = [];
   try {
+    for (let i = 0; i < n; i++) tasks.push(startDocument(bytes));
+    const handles = await Promise.all(tasks.map((task) => task.promise));
     const t0 = performance.now();
     const doc = await extractDocument(handles, pdfjs.OPS as any, name, { bytes: new Uint8Array(bytes), inflate: browserInflate, onProgress });
     console.info(`[pdf-diff] analysed ${name} (${doc.numPages} pages) in ${((performance.now() - t0) / 1000).toFixed(1)} s with ${n} workers`);
     return doc;
   } finally {
-    await Promise.all(handles.map((h) => h.loadingTask.destroy()));
-    workers.forEach((w) => w.destroy());
+    await Promise.allSettled(tasks.map((task) => task.destroy()));
   }
 }
 
