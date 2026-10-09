@@ -11,7 +11,8 @@ notes:
 - **Figures change.** Each `\includegraphics` is located in the PDF and
   fingerprinted; unchanged figures are recognised instantly, the others are
   rendered and compared visually (side by side, blink, difference, swipe).
-  Renumbered figures are matched through their captions.
+  Renumbered figures are matched through their captions; if a pairing is wrong,
+  "Wrong pair?" on the entry lets you choose the right one.
 - **Review comments cite old line numbers.** Paste your Markdown review and
   every `L123`, `L8-9`, `Figure 4`, `Table 9 and 10`, `Eq. 12`, `Sec. 4.1` or
   `Ref. 29` is followed into the new version, with a status (unchanged,

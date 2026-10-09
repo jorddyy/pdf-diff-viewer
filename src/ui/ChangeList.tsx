@@ -5,19 +5,21 @@ import type { FigureStatus } from '../align/objects';
 export interface Filters {
   text: boolean;
   numeric: boolean;
+  equations: boolean;
   moved: boolean;
   figures: boolean;
   renumber: boolean;
   toc: boolean;
 }
 
-export const DEFAULT_FILTERS: Filters = { text: true, numeric: true, moved: true, figures: true, renumber: false, toc: false };
+export const DEFAULT_FILTERS: Filters = { text: true, numeric: true, equations: true, moved: true, figures: true, renumber: false, toc: false };
 
 export function changeCategory(c: Change): keyof Filters {
   if (c.cls === 'toc') return 'toc';
   if (c.kind === 'moved') return 'moved';
   if (c.cls === 'renumber') return 'renumber';
   if (c.cls === 'numeric') return 'numeric';
+  if (c.cls === 'equation') return 'equations';
   return 'text';
 }
 
@@ -46,6 +48,7 @@ export function entryCategory(e: Entry): keyof Filters {
 const FILTER_LABELS: [keyof Filters, string, string][] = [
   ['text', 'Text', 'Edited, added and removed text'],
   ['numeric', 'Numbers', 'Only numbers changed (results, yields, …)'],
+  ['equations', 'Equations', 'Edits inside display equations (formula text is noisy; check the page)'],
   ['moved', 'Moved', 'Text that moved to another place'],
   ['figures', 'Figures', 'Changed, new and removed figures'],
   ['renumber', 'Renumbering', 'Only figure/table/equation/reference numbers changed'],
@@ -57,6 +60,7 @@ export function badge(c: Change): [string, string] {
   if (c.cls === 'numeric') return ['Number', 'num'];
   if (c.cls === 'renumber') return ['Renumbered', 'ren'];
   if (c.cls === 'toc') return ['Contents', 'toc'];
+  if (c.cls === 'equation') return ['Equation', 'edit'];
   if (c.kind === 'insert') return ['Added', 'ins'];
   if (c.kind === 'delete') return ['Removed', 'del'];
   return ['Edited', 'edit'];
@@ -91,12 +95,14 @@ interface Props {
   /** Filled in by the list: called with the visible part of the new version while the user scrolls the PDFs. */
   follow?: { current: Follower | null };
   onCompare: (matchId: number) => void;
+  /** Change which object a figure/table/equation is paired with. */
+  onRepair?: (matchId: number) => void;
   note?: string;
 }
 
-export function ChangeList({ entries, filters, setFilters, selected, onSelect, reveal, follow, onCompare, note }: Props) {
+export function ChangeList({ entries, filters, setFilters, selected, onSelect, reveal, follow, onCompare, onRepair, note }: Props) {
   const listRef = useRef<HTMLDivElement>(null);
-  const counts: Record<keyof Filters, number> = { text: 0, numeric: 0, moved: 0, figures: 0, renumber: 0, toc: 0 };
+  const counts: Record<keyof Filters, number> = { text: 0, numeric: 0, equations: 0, moved: 0, figures: 0, renumber: 0, toc: 0 };
   for (const e of entries) counts[entryCategory(e)]++;
   const visible = entries.filter((e) => filters[entryCategory(e)]);
 
@@ -161,6 +167,19 @@ export function ChangeList({ entries, filters, setFilters, selected, onSelect, r
                       p.{e.aPage + 1} → p.{e.bPage + 1}
                     </span>
                   </div>
+                  {selected === e.key && onRepair && (
+                    <div class="snip">
+                      <button
+                        class="link"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          onRepair(+e.key.slice(1));
+                        }}
+                      >
+                        Wrong pair?
+                      </button>
+                    </div>
+                  )}
                 </div>
               </>
             );
@@ -189,6 +208,17 @@ export function ChangeList({ entries, filters, setFilters, selected, onSelect, r
                         }}
                       >
                         Compare
+                      </button>
+                    )}
+                    {selected === e.key && onRepair && (
+                      <button
+                        class="link repair"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          onRepair(e.fig.matchId);
+                        }}
+                      >
+                        {e.fig.status === 'added' || e.fig.status === 'removed' ? 'Pair with…' : 'Wrong pair?'}
                       </button>
                     )}
                   </div>

@@ -36,6 +36,7 @@ npx tsx scripts/dev/compare-scan.ts file.pdf              # scanner vs pdf.js op
 npx tsx scripts/dev/find-hash.ts file.pdf <hash>...       # which figure has a fingerprint
 npx tsx scripts/dev/e2e-links.ts <url> <out-dir> old.pdf new.pdf     # finds a PDF link, clicks it, checks the pane scrolled
 npx tsx scripts/dev/e2e-contents.ts <url> <out-dir> old.pdf new.pdf  # Contents tab: click a section, both panes scroll
+npx tsx scripts/dev/e2e-repair.ts <url> <out-dir> old.pdf new.pdf    # "Wrong pair?" on a figure entry: choose none, entries change
 ```
 
 Browser tests (puppeteer-core, no bundled browser):
@@ -75,13 +76,13 @@ scripts and tests (`scripts/node-pdf.ts` provides pdf.js legacy build + zlib).
 | Document | `src/extract/document.ts` | orchestrates the above into `DocModel` (`src/extract/types.ts`) |
 | Tokens | `src/align/tokens.ts` | reading-order words, hyphenation undone, thin-space digit groups merged (`497 052` = `497052`) |
 | Diff | `src/align/diff.ts` | unique 4-shingle anchors (LIS) + exact LCS in gaps (≤ `MAX_CELLS`), recursive unique-token anchors for big gaps |
-| Changes | `src/align/align.ts` | Running text and floats (captions, table contents) are separate streams: floats are paired by content (`pairFloats`) and aligned pair by pair, so LaTeX float placement never shows as a move. Moved blocks (running text only) are merged (`mergeMoves`) and refined, carrying `move` info for the list. Grouping (bridges ≤ 3 equal tokens), classes `text`/`numeric`/`renumber`/`toc`, snippets for the list |
-| Objects | `src/align/objects.ts` | figure/table/equation matching: caption-token votes (an extended caption still counts with ≥ 5 shared words and ≥ 35 % of the shorter caption), then fingerprints, then a similar-wording pass (Dice ≥ 0.4, order kept), then same number **only if** `unrelated()` is false, then same-page position; section matching |
-| Figures | `src/figures/compare.ts` | render once per page, crop panels, register (global shift), ink-difference ratio > `CHANGED_THRESHOLD` = changed |
+| Changes | `src/align/align.ts` | Running text and floats (captions, table contents) are separate streams: floats are paired by content (`pairFloats`) and aligned pair by pair, so LaTeX float placement never shows as a move. Moved blocks (running text only) are merged (`mergeMoves`) and refined, carrying `move` info for the list. Grouping (bridges ≤ 3 equal tokens), classes `text`/`numeric`/`equation`/`renumber`/`toc` (`equation` = text edits inside a display equation; pure number changes there stay `numeric`), snippets for the list |
+| Objects | `src/align/objects.ts` | figure/table/equation matching: caption-token votes (an extended caption still counts with ≥ 5 shared words and ≥ 35 % of the shorter caption), then fingerprints, then a similar-wording pass (Dice ≥ 0.4, order kept), then same number **only if** `unrelated()` is false, then same-page position; section matching. `matchObjects(A, B, al, overrides)` takes the user's `PairOverride`s (kind + number, per `oldHash:newHash`, stored in the workspace): forced pairs, or "no counterpart"; edited through `ui/PairDialog.tsx` ("Wrong pair?" / "Pair with…" on the selected figure or renumbering entry). They change figure comparison and renumbering, not the caption text diff, which comes from `pairFloats` |
+| Figures | `src/figures/compare.ts` | render once per page, crop panels, register (`register()`: global shift plus a small global scale 0.9–1.1, only when it clearly lowers the cost; a scaled match gets a 2 % noise allowance and a 2 px edge tolerance), ink-difference ratio > `CHANGED_THRESHOLD` = changed |
 | Comments | `src/comments/` | `parse.ts` (Markdown → items + refs + snippets), `assign.ts` (round → version), `resolve.ts` (ref → location + status in target), `export.ts` (annotated Markdown) |
 | UI | `src/app.tsx`, `src/ui/*` | Preact. Each pane header has a `PageBox` (current page, type a number to jump; `g` focuses it; `PaneControl.listeners` update it on scroll). The compare dialog hides blink/difference/swipe when no panel exists in both versions. Panes render pages lazily (IntersectionObserver) with a pdf.js `TextLayer` (selectable text, browser find). Marks are drawn under the text layer with `pointer-events: none`; a click on a page hit-tests them (`onMarkClick`), switches the sidebar tab and bumps `reveal`, which centres and flashes the entry (`revealEntry`), even if it was already selected. The other way round, user scrolling of the PDFs calls `followRef` with the visible range of the new version; the open list marks entries on screen (`.inview`, `followList`) and scrolls the first one to the top (`scrollToTop`). Only user scrolls trigger it (the sync leader), never navigation. Keys: `t<change>`, `f<figure match>`, `r<renumbered object>`, `c<comment>`. Sidebar tabs: Changes, Contents, Comments (`tab` is saved in the workspace) |
 | Saved comparisons | `src/pdf/workspaces.ts` | IndexedDB: PDFs by SHA-256 plus a workspace per comparison (pair, filters, zoom, scroll, comments, round overrides, done ticks). Auto-saved (debounced), the newest is restored on load, the start page lists them (max 15) |
-| Links | `src/ui/PdfPane.tsx` | `page.getAnnotations()` gives the PDF's Link annotations per visible page; `PageLink` boxes are drawn with the PDF's own border (colour/width) in `.overlay.links`. A click goes to `resolveDest` (named or explicit destination → page + y, `PaneControl.scrollToDest`) or opens the URL in a new tab. A link wins over a highlight; Alt-click picks the highlight |
+| Links | `src/ui/PdfPane.tsx` | `page.getAnnotations()` gives the PDF's Link annotations per visible page; `PageLink` boxes are drawn with the PDF's own border (colour/width) in `.overlay.links`. A click goes to `resolveDest` (named or explicit destination → page + y, `PaneControl.scrollToDest`) or opens the URL in a new tab. A link wins over a highlight; Alt-click picks the highlight. Following a link pushes the scroll position on `PaneControl.history`; the "← Back" button (only shown then), Alt+← or the mouse back button return, and the other pane follows |
 | Contents | `src/ui/ContentsPanel.tsx` | Third sidebar tab: outline of the new version's sections (`matchSections`), removed old sections after their closest surviving predecessor, per-section change counts that follow the filters; click → `goToSection` in `app.tsx` scrolls both panes (one-sided sections via the sync map); the current section follows scrolling through `followRef` |
 | LaTeX | `src/ui/Tex.tsx` | Temml (MathML, no fonts to bundle) typesets `$…$`, `$$…$$`, `\(…\)`, `\[…\]` in comment text, quotes and replies. `$` next to a space or digit is money; unparsable formulas stay as typed |
 | Version | `src/version.ts`, `vite.config.ts` | `BUILD` (package version, git commit, build time) is injected via `define`; the build writes `dist/version.json`; the app fetches it (https only, GET only) and offers "Update available · reload" when the deployed commit is newer |
@@ -170,7 +171,10 @@ Key decisions (and why):
 ## Known limitations / ideas
 
 - Equations are paired by votes and formula similarity only; renumbered or
-  split equations in heavily rewritten notes can still be unpaired.
+  split equations in heavily rewritten notes can still be unpaired (the
+  "Wrong pair?" dialog only reaches equations that show up as a renumbering).
+- Figure registration handles one global shift and scale; a plot re-rendered
+  with different relative proportions (axis ranges) still counts as changed.
 - Two-column layouts: reading order is by rows; columns are not split.
 - Display equations: maths token order can give noisy "Edited" entries;
   maybe give equations their own class.
@@ -192,7 +196,9 @@ Key decisions (and why):
 - User-visible changes go into `CHANGELOG.md` under "Unreleased" as you work (the 0.2.0 section was written at its first release).
   To release: bump the version (`npm version minor --no-git-tag-version`),
   rename "Unreleased" to the version and date, commit, then `git tag vX.Y.Z`
-  and push the tag. Only do this when asked.
+  and push the tag. Only do this when asked. Pushing a `v*` tag runs
+  `.github/workflows/release.yml`, which checks the tag against `package.json`
+  and `CHANGELOG.md` and creates the GitHub release from that changelog section.
 
 ## Conventions
 

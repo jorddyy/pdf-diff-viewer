@@ -5,6 +5,19 @@ All notable changes to the PDF diff viewer. Versions follow
 the format follows [Keep a Changelog](https://keepachangelog.com/).
 The running version is shown next to the title in the app (hover for the commit).
 
+## [Unreleased]
+
+### Added
+- "← Back" button (and Alt+←, mouse back button) after following a link inside the PDF.
+- **Equations** filter: edits inside display equations are their own class
+  (number-only changes stay under Numbers).
+- "Wrong pair?" / "Pair with…" on a selected figure or renumbering entry: choose
+  which figure, table or equation belongs together, or none. Saved with the comparison.
+- Pushing a `v*` tag creates the GitHub release from this changelog.
+
+### Changed
+- Figure comparison tolerates a plot that was re-rendered at a slightly different size.
+
 ## [0.2.0] - 2026-10-09
 
 ### Added

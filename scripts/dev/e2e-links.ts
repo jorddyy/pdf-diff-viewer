@@ -33,6 +33,13 @@ if (hit) {
   await sleep(1000);
   const after = await pane.evaluate((e) => e.scrollTop);
   console.log(after !== before ? 'PASS' : 'FAIL', 'scrollTop', before, '->', after);
+  await page.screenshot({ path: path.join(outDir, 'links-after.png') });
+  await page.keyboard.down('Alt');
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.up('Alt');
+  await sleep(600);
+  const back = await pane.evaluate((e) => e.scrollTop);
+  console.log(back === before ? 'PASS' : 'FAIL', 'Alt+Left returns', after, '->', back, 'back button gone:', !(await page.$('.back-btn')));
 }
 await page.screenshot({ path: path.join(outDir, 'links.png') });
 await browser.close();

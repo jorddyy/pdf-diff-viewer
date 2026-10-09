@@ -1385,3 +1385,46 @@ code {
   color: var(--accent);
   font-size: 12px;
 }
+
+/* "Back" after following a link inside the PDF */
+.back-anchor {
+  position: sticky;
+  top: 8px;
+  height: 0;
+  z-index: 4;
+  display: flex;
+  justify-content: flex-start;
+  padding-left: 10px;
+}
+
+.back-btn {
+  height: 26px;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.25);
+}
+
+/* Pairing dialog */
+.modal.pair {
+  width: min(640px, 100%);
+}
+
+.pair-fixed {
+  padding: 8px 10px;
+  border-left: 3px solid var(--line);
+  background: var(--chip);
+  border-radius: 4px;
+}
+
+.modal.pair select {
+  width: 100%;
+}
+
+.pair-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.chg .repair {
+  margin-left: 6px;
+  font-size: 11px;
+}

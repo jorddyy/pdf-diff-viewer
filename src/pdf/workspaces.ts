@@ -38,6 +38,8 @@ export interface Workspace {
   comments: string;
   /** Review round → version hash (only rounds the user changed). */
   roundOverride: [number, string | null][];
+  /** Figure/table/equation pairings chosen by the user, per "oldHash:newHash". */
+  pairOverrides?: Record<string, { kind: 'figure' | 'table' | 'equation'; a: string | null; b: string | null }[]>;
   done: string[];
 }
 

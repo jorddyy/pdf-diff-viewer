@@ -96,6 +96,11 @@ function shiftCost(la: Float32Array, lb: Float32Array, wa: number, ha: number, w
  * points differently between versions.
  */
 export function bestShift(la: Float32Array, wa: number, ha: number, lb: Float32Array, wb: number, hb: number, maxFrac = 0.04): [number, number] {
+  const [dx, dy] = searchShift(la, wa, ha, lb, wb, hb, maxFrac);
+  return [dx, dy];
+}
+
+function searchShift(la: Float32Array, wa: number, ha: number, lb: Float32Array, wb: number, hb: number, maxFrac: number, coarseOnly = false): [number, number, number] {
   const f = Math.max(1, Math.floor(Math.max(wa, wb) / 160));
   const [sa, swa, sha] = downsample(la, wa, ha, f);
   const [sb, swb, shb] = downsample(lb, wb, hb, f);
@@ -112,6 +117,7 @@ export function bestShift(la: Float32Array, wa: number, ha: number, lb: Float32A
     }
   }
   let [bx, by] = [best[0] * f, best[1] * f];
+  if (coarseOnly) return [bx, by, bestCost];
   const step = Math.max(1, Math.floor(Math.max(wa, ha) / 400));
   let fine = shiftCost(la, lb, wa, ha, wb, hb, bx, by, step);
   const [cx, cy] = [bx, by];
@@ -124,7 +130,70 @@ export function bestShift(la: Float32Array, wa: number, ha: number, lb: Float32A
       }
     }
   }
-  return [bx, by];
+  return [bx, by, fine];
+}
+
+/** `l` magnified by `s` about its centre (same size, white where nothing is left). */
+function scaleAbout(l: Float32Array, w: number, h: number, s: number): Float32Array {
+  const out = new Float32Array(l.length);
+  const [cx, cy] = [(w - 1) / 2, (h - 1) / 2];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const sx = cx + (x - cx) / s;
+      const sy = cy + (y - cy) / s;
+      if (sx < 0 || sy < 0 || sx > w - 1 || sy > h - 1) {
+        out[y * w + x] = 255;
+        continue;
+      }
+      const x0 = Math.floor(sx);
+      const y0 = Math.floor(sy);
+      const x1 = Math.min(w - 1, x0 + 1);
+      const y1 = Math.min(h - 1, y0 + 1);
+      const fx = sx - x0;
+      const fy = sy - y0;
+      out[y * w + x] = (l[y0 * w + x0] * (1 - fx) + l[y0 * w + x1] * fx) * (1 - fy) + (l[y1 * w + x0] * (1 - fx) + l[y1 * w + x1] * fx) * fy;
+    }
+  }
+  return out;
+}
+
+/** A plot re-rendered at a slightly different size: scales tried besides 1. */
+const SCALES = [0.9, 0.93, 0.96, 1.04, 1.07, 1.1];
+
+/**
+ * `b` registered onto `a`'s grid: best of a global shift and a small global
+ * scale (a cropped or resized plot). A scale is only used when it clearly beats
+ * the plain shift, so identical figures are never "improved" into a match.
+ */
+export function register(la: Float32Array, wa: number, ha: number, lb: Float32Array, wb: number, hb: number): { l: Float32Array; scaled: boolean } {
+  let src = lb;
+  const [, , base] = searchShift(la, wa, ha, lb, wb, hb, 0.04, true);
+  if (base > 2) {
+    let bestCost = base * 0.8; // needs a clear gain
+    let bestS = 1;
+    const tryScale = (s: number) => {
+      const ls = scaleAbout(lb, wb, hb, s);
+      const [, , c] = searchShift(la, wa, ha, ls, wb, hb, 0.04, true);
+      if (c < bestCost) {
+        bestCost = c;
+        bestS = s;
+        src = ls;
+      }
+    };
+    for (const s of SCALES) tryScale(s);
+    // Close in on the best scale.
+    if (bestS !== 1) for (const step of [0.015, 0.007, 0.003]) for (const s of [bestS - step, bestS + step]) tryScale(s);
+  }
+  const [sx, sy] = bestShift(la, wa, ha, src, wb, hb);
+  const out = new Float32Array(wa * ha);
+  for (let y = 0; y < ha; y++) {
+    for (let x = 0; x < wa; x++) {
+      const xb = x + sx;
+      const yb = y + sy;
+      out[y * wa + x] = xb < 0 || yb < 0 || xb >= wb || yb >= hb ? 255 : src[yb * wb + xb];
+    }
+  }
+  return { l: out, scaled: src !== lb };
 }
 
 /**
@@ -136,28 +205,35 @@ export function inkDiff(a: Raster, b: Raster): number {
   if (a.width !== b.width || Math.abs(a.height - b.height) > 0.03 * Math.max(a.height, b.height) + 1) return 1;
   const w = a.width;
   const la = blur(luminance(a), w, a.height);
-  const lb = blur(luminance(b), w, b.height);
-  const [sx, sy] = bestShift(la, w, a.height, lb, w, b.height);
+  const reg = register(la, w, a.height, blur(luminance(b), w, b.height), w, b.height);
+  const lb = reg.l;
+  // A resampled plot has softer edges: allow two pixels instead of one.
+  const tol = reg.scaled ? 2 : 1;
   let ink = 0;
   let diff = 0;
-  const at = (l: Float32Array, h: number, x: number, y: number) => (x < 0 || y < 0 || x >= w || y >= h ? 255 : l[y * w + x]);
-  for (let y = 0; y < a.height; y++) {
+  const h = a.height;
+  const at = (l: Float32Array, x: number, y: number) => (x < 0 || y < 0 || x >= w || y >= h ? 255 : l[y * w + x]);
+  for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const va = la[y * w + x];
-      const vb = at(lb, b.height, x + sx, y + sy);
+      const vb = lb[y * w + x];
       if (va > 225 && vb > 225) continue;
       ink++;
       let best = Math.abs(va - vb);
-      for (let dy = -1; dy <= 1 && best > 40; dy++) {
-        for (let dx = -1; dx <= 1 && best > 40; dx++) {
-          best = Math.min(best, Math.abs(va - at(lb, b.height, x + sx + dx, y + sy + dy)), Math.abs(at(la, a.height, x + dx, y + dy) - vb));
+      for (let dy = -tol; dy <= tol && best > 40; dy++) {
+        for (let dx = -tol; dx <= tol && best > 40; dx++) {
+          best = Math.min(best, Math.abs(va - at(lb, x + dx, y + dy)), Math.abs(at(la, x + dx, y + dy) - vb));
         }
       }
       if (best > 40) diff++;
     }
   }
-  return diff / Math.max(ink, 50);
+  const ratio = diff / Math.max(ink, 50);
+  // Resampling a plot leaves a noise floor of a percent or two that is not a change.
+  return reg.scaled ? Math.max(0, ratio - SCALED_NOISE) : ratio;
 }
+
+const SCALED_NOISE = 0.02;
 
 /** Threshold above which a figure panel is reported as changed. */
 export const CHANGED_THRESHOLD = 0.01;
@@ -167,15 +243,12 @@ export function diffImage(a: Raster, b: Raster): ImageData {
   const w = a.width;
   const h = a.height;
   const la = luminance(a);
-  const lb = luminance(b);
-  const [sx, sy] = bestShift(la, a.width, a.height, lb, b.width, b.height);
+  const lb = register(la, a.width, a.height, luminance(b), b.width, b.height).l;
   const out = new ImageData(w, h);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const va = la[y * a.width + x];
-      const xb = x + sx;
-      const yb = y + sy;
-      const vb = xb < 0 || yb < 0 || xb >= b.width || yb >= b.height ? 255 : lb[yb * b.width + xb];
+      const vb = lb[y * w + x];
       const p = (y * w + x) * 4;
       if (va < vb - 40) out.data.set([200, 40, 40, 255], p);
       else if (vb < va - 40) out.data.set([30, 150, 60, 255], p);

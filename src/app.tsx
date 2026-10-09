@@ -19,7 +19,8 @@ import { parseComments, removeItem } from './comments/parse';
 import { assignRounds } from './comments/assign';
 import { resolveComment, type CommentResolution, type ResolveContext, type VersionData } from './comments/resolve';
 import { annotateMarkdown } from './comments/export';
-import { matchSections, type SectionMatch } from './align/objects';
+import { matchSections, type PairOverride, type SectionMatch } from './align/objects';
+import { PairDialog, type PairRequest } from './ui/PairDialog';
 import { BUILD, CHANGELOG_URL, newerBuild, type BuildInfo } from './version';
 import { ContentsPanel } from './ui/ContentsPanel';
 import { CommentsPanel, type History } from './ui/CommentsPanel';
@@ -107,6 +108,11 @@ export function App() {
   }, [theme]);
   const [commentText, setCommentText] = useState('');
   const [roundOverride, setRoundOverride] = useState<Map<number, number | null>>(new Map());
+  // Pairings chosen by the user, per "oldHash:newHash".
+  const [pairOv, setPairOv] = useState<Record<string, PairOverride[]>>({});
+  const pairOvRef = useRef(pairOv);
+  pairOvRef.current = pairOv;
+  const [repairId, setRepairId] = useState<number | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [done, setDone] = useState<Set<string>>(new Set());
   const [undo, setUndo] = useState<{ text: string; label: string } | null>(null);
@@ -257,6 +263,7 @@ export function App() {
     setTab(ws.tab);
     setCommentText(ws.comments);
     setRoundOverride(new Map(ws.roundOverride.map(([r, h]) => [r, id(h)])));
+    setPairOv(ws.pairOverrides ?? {});
     setDone(new Set(ws.done));
     pendingScroll.current = ws.scroll;
     wsIdRef.current = ws.id;
@@ -321,6 +328,7 @@ export function App() {
       comments: commentText,
       roundOverride: [...roundOverride].map(([r, v]) => [r, v === null ? null : hashOf(v)]),
       done: [...done],
+      pairOverrides: pairOv,
     };
     try {
       await saveWorkspace(ws);
@@ -333,7 +341,7 @@ export function App() {
     clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => doSave.current(), 700);
   }, []);
-  useEffect(scheduleSave, [versions.map((v) => `${v.hash}:${v.label}`).join(), left, right, pairChosen, filters, zoom, sync, tab, commentText, roundOverride, done, wsMeta?.title]);
+  useEffect(scheduleSave, [versions.map((v) => `${v.hash}:${v.label}`).join(), left, right, pairChosen, filters, zoom, sync, tab, commentText, roundOverride, done, pairOv, wsMeta?.title]);
   useEffect(() => {
     const flush = () => doSave.current();
     window.addEventListener('pagehide', flush);
@@ -360,6 +368,7 @@ export function App() {
     closeAll();
     setCommentText('');
     setRoundOverride(new Map());
+    setPairOv({});
     setDone(new Set());
     setPairChosen(false);
     setRecent(await listWorkspaces().catch(() => []));
@@ -370,10 +379,13 @@ export function App() {
 
   const objectsFor = useCallback(
     (a: VersionData, b: VersionData) => {
-      const key = `${a.id}:${b.id}`;
+      const ha = versionsRef.current.find((v) => v.id === a.id)?.hash;
+      const hb = versionsRef.current.find((v) => v.id === b.id)?.hash;
+      const ov = (ha && hb && pairOvRef.current[`${ha}:${hb}`]) || [];
+      const key = `${a.id}:${b.id}:${JSON.stringify(ov)}`;
       let r = objCache.current.get(key);
       if (!r) {
-        r = matchObjects(a.doc, b.doc, getAlign(a, b));
+        r = matchObjects(a.doc, b.doc, getAlign(a, b), ov);
         objCache.current.set(key, r);
       }
       return r;
@@ -394,14 +406,14 @@ export function App() {
   );
   const objMatches = useMemo(
     () => (al && A?.doc && B?.doc ? objectsFor({ id: A.id, label: A.label, doc: A.doc }, { id: B.id, label: B.label, doc: B.doc }) : []),
-    [al],
+    [al, pairOv],
   );
   const figs = useMemo(() => objMatches.filter((m) => m.kind === 'figure'), [objMatches]);
   const [figStatus, setFigStatus] = useState<Map<number, { status: FigureStatus; diffs: (number | null)[] }>>(new Map());
   useEffect(() => {
     setSelected(null);
     setFigStatus(new Map());
-  }, [al]);
+  }, [al, objMatches]);
 
   // Compare figures whose graphics are not byte-identical, in the background.
   // Separate pdf.js workers keep page rendering in the panes responsive.
@@ -530,7 +542,7 @@ export function App() {
       sections: sectionsFor,
       figureStatus: (src, tgt, m) => (src.id === A?.id && tgt.id === B?.id ? (figStatus.get(m.id)?.status ?? m.status) : m.status),
     }),
-    [A, B, versions, roundOverride, autoRounds, figStatus, getAlign, objectsFor, sectionsFor],
+    [A, B, versions, roundOverride, autoRounds, figStatus, getAlign, objectsFor, sectionsFor, pairOv],
   );
 
   const resolutions = useMemo<CommentResolution[]>(() => {
@@ -590,7 +602,7 @@ export function App() {
   const [exportOpen, setExportOpen] = useState(false);
   const runExport = async (opts: ExportOptions) => {
     if (!al || !A?.doc || !B?.doc) return;
-    const exportFilters: Filters = { text: true, numeric: true, moved: true, figures: true, renumber: opts.minor, toc: opts.minor };
+    const exportFilters: Filters = { text: true, numeric: true, equations: true, moved: true, figures: true, renumber: opts.minor, toc: opts.minor };
     const vis = (c: Alignment['changes'][number]) => changeVisible(c, exportFilters);
     const mA = sideMarks(A.doc, al, 'a', vis);
     const mB = sideMarks(B.doc, al, 'b', vis);
@@ -742,6 +754,29 @@ export function App() {
     },
     [figs, A, B, figStatus],
   );
+
+  const repairReq = useMemo<PairRequest | null>(() => {
+    const m = repairId === null ? undefined : objMatches.find((x) => x.id === repairId);
+    if (!m || !A?.doc || !B?.doc) return null;
+    // Fix the side that exists; for a paired object start from the old one.
+    const side = m.a !== null ? 'a' : 'b';
+    const oa = m.a !== null ? A.doc.objects[m.a] : null;
+    const ob = m.b !== null ? B.doc.objects[m.b] : null;
+    const fixed = side === 'a' ? oa! : ob!;
+    if (!fixed.number) return null;
+    const pool = (side === 'a' ? B.doc : A.doc).objects.filter((o) => o.kind === m.kind);
+    return { kind: m.kind, fixed, side, current: side === 'a' ? ob : oa, pool, aLabel: A.label, bLabel: B.label };
+  }, [repairId, objMatches, A, B]);
+  const applyPairing = (o: PairOverride) => {
+    if (!A || !B) return;
+    const key = `${A.hash}:${B.hash}`;
+    setPairOv((all) => {
+      // A new choice replaces earlier ones that touch the same objects.
+      const rest = (all[key] ?? []).filter((x) => x.kind !== o.kind || ((o.a === null || (x.a !== o.a)) && (o.b === null || x.b !== o.b)));
+      return { ...all, [key]: [...rest, o] };
+    });
+    setRepairId(null);
+  };
 
   const select = useCallback(
     (key: string) => {
@@ -1192,6 +1227,7 @@ export function App() {
                   reveal={reveal}
                   follow={followRef}
                   onCompare={openCompare}
+                  onRepair={setRepairId}
                   note={figs.some((m) => statusOf(m) === 'pending') ? 'Comparing figures in the background…' : undefined}
                 />
               ) : (
@@ -1240,6 +1276,7 @@ export function App() {
       )}
       {dragging && <div class="dropmask">Drop PDFs to add them</div>}
       {compare && <CompareModal req={compare} onClose={() => setCompare(null)} />}
+      {repairReq && <PairDialog req={repairReq} onApply={applyPairing} onClose={() => setRepairId(null)} />}
       {exportOpen && A && B && (
         <ExportDialog aLabel={A.label} bLabel={B.label} hasComments={resolutions.length > 0} onExport={runExport} onClose={() => setExportOpen(false)} />
       )}

@@ -6,7 +6,7 @@ import { intern, tokenize, type Token } from './tokens';
 
 export type ChangeKind = 'insert' | 'delete' | 'replace' | 'moved';
 /** text: ordinary edit; numeric: only numbers changed; renumber: only figure/eq/ref numbers; toc: table of contents. */
-export type ChangeClass = 'text' | 'numeric' | 'renumber' | 'toc';
+export type ChangeClass = 'text' | 'numeric' | 'renumber' | 'toc' | 'equation';
 
 export interface Segment {
   text: string;
@@ -463,10 +463,15 @@ function buildChange(ctx: Ctx, id: number, ga: number[], gb: number[], atA: numb
     : firstLine?.kind === 'heading'
       ? 'Heading'
       : '';
+  // Maths token order is noisy: edits inside a display equation get their own class.
+  // Pure number changes stay "numeric" (results are often written as equations).
+  const inEquation = [firstLine, gb.length ? B.lines[tokensB[gb[0]].line] : null].some((l) => l && l.object >= 0 && (l === firstLine ? doc : B).objects[l.object].kind === 'equation');
+  let cls = classify(ctx, ga, gb);
+  if (cls === 'text' && inEquation) cls = 'equation';
   return {
     id,
     kind,
-    cls: classify(ctx, ga, gb),
+    cls,
     aTokens: ga,
     bTokens: gb,
     aAt: ga.length ? ga[0] : atA,

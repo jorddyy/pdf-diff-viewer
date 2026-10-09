@@ -25,6 +25,17 @@ export interface ObjectMatch {
   parts: PartMatch[];
 }
 
+/**
+ * A pairing chosen by the user (identified by kind and number, so it survives
+ * re-analysis). Both numbers: these two belong together. One side null: that
+ * object has no counterpart.
+ */
+export interface PairOverride {
+  kind: ObjectKind;
+  a: string | null;
+  b: string | null;
+}
+
 export interface SectionMatch {
   a: number | null;
   b: number | null;
@@ -36,7 +47,7 @@ export interface SectionMatch {
  * figures whose graphics are byte-identical are matched even when the caption
  * was rewritten; the number is the last resort.
  */
-export function matchObjects(A: DocModel, B: DocModel, al: Alignment): ObjectMatch[] {
+export function matchObjects(A: DocModel, B: DocModel, al: Alignment, overrides: PairOverride[] = []): ObjectMatch[] {
   const votes = new Map<number, Map<number, number>>();
   const sizeA = new Map<number, number>();
   const sizeB = new Map<number, number>();
@@ -80,6 +91,17 @@ export function matchObjects(A: DocModel, B: DocModel, al: Alignment): ObjectMat
   const usedA = new Set<number>();
   const usedB = new Set<number>();
   const pairs: [number, number, number][] = [];
+  // The user's choices come first and keep their objects out of the automatic matching.
+  const find = (doc: DocModel, kind: ObjectKind, number: string) => doc.objects.find((o) => o.kind === kind && o.number === number);
+  for (const ov of overrides) {
+    const oa = ov.a ? find(A, ov.kind, ov.a) : undefined;
+    const ob = ov.b ? find(B, ov.kind, ov.b) : undefined;
+    if (oa) usedA.add(oa.id);
+    if (ob) usedB.add(ob.id);
+    if (oa && ob) {
+      pairs.push([oa.id, ob.id, 1]);
+    }
+  }
   for (const c of cands) {
     if (c.score < 0.25 || usedA.has(c.a) || usedB.has(c.b)) continue;
     usedA.add(c.a);
@@ -152,8 +174,10 @@ export function matchObjects(A: DocModel, B: DocModel, al: Alignment): ObjectMat
       parts: oa.kind === 'figure' ? matchParts(A, B, a, b) : [],
     });
   }
-  for (const o of A.objects) if (!usedA.has(o.id)) out.push(single(o.kind, o.id, null));
-  for (const o of B.objects) if (!usedB.has(o.id)) out.push(single(o.kind, null, o.id));
+  const pairedA = new Set(pairs.map((p) => p[0]));
+  const pairedB = new Set(pairs.map((p) => p[1]));
+  for (const o of A.objects) if (!pairedA.has(o.id)) out.push(single(o.kind, o.id, null));
+  for (const o of B.objects) if (!pairedB.has(o.id)) out.push(single(o.kind, null, o.id));
   for (const m of out) {
     if (m.kind !== 'figure' || m.status !== 'pending') continue;
     if (m.parts.length && m.parts.every((p) => p.sameHash)) m.status = 'identical';
@@ -172,7 +196,7 @@ function words(s: string): Map<string, number> {
 }
 
 /** Shared caption words (Dice); 0 when a caption is too short to tell. */
-function captionSimilarity(a: DocObject, b: DocObject): number {
+export function captionSimilarity(a: DocObject, b: DocObject): number {
   const x = words(a.caption);
   const y = words(b.caption);
   const nx = [...x.values()].reduce((s, c) => s + c, 0);

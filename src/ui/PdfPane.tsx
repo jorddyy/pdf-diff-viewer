@@ -15,6 +15,24 @@ export class PaneControl {
   tops: number[] = [];
   /** Called (once per frame) when the pane scrolls, e.g. to update the page box. */
   listeners = new Set<() => void>();
+  /** Where the pane was before following a link (newest last); Alt+← or "Back" returns. */
+  history: { top: number; left: number }[] = [];
+  onHistory: (() => void) | null = null;
+
+  pushHistory(): void {
+    if (!this.el) return;
+    this.history.push({ top: this.el.scrollTop, left: this.el.scrollLeft });
+    if (this.history.length > 30) this.history.shift();
+    this.onHistory?.();
+  }
+
+  goBack(): boolean {
+    const h = this.history.pop();
+    if (!h || !this.el) return false;
+    this.el.scrollTo({ top: h.top, left: h.left });
+    this.onHistory?.();
+    return true;
+  }
 
   notify(): void {
     for (const f of this.listeners) f();
@@ -111,6 +129,17 @@ export function PdfPane({ pdf, pages, scale, maxWidth, marks, selected, control,
   control.scales = scales;
   const frame = useRef(0);
   const elRef = useRef<HTMLDivElement | null>(null);
+  const [canBack, setCanBack] = useState(control.history.length > 0);
+  useEffect(() => {
+    control.onHistory = () => setCanBack(control.history.length > 0);
+    return () => {
+      control.onHistory = null;
+    };
+  }, [control]);
+  const goBack = () => {
+    onUserInput('scroll'); // the other pane follows, like after any scroll
+    control.goBack();
+  };
 
   // Content wider than the pane (zoomed in) starts centred.
   useEffect(() => {
@@ -139,10 +168,25 @@ export function PdfPane({ pdf, pages, scale, maxWidth, marks, selected, control,
       onPointerCancel={() => onUserInput('up')}
       onTouchStart={() => onUserInput('down')}
       onTouchEnd={() => onUserInput('up')}
+      onMouseUp={(e) => {
+        if (e.button === 3) goBack(); // the "back" button of a mouse
+      }}
       onKeyDown={(e) => {
+        if (e.altKey && e.key === 'ArrowLeft') {
+          e.preventDefault();
+          goBack();
+          return;
+        }
         if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key)) onUserInput('scroll');
       }}
     >
+      {canBack && (
+        <div class="back-anchor">
+          <button class="btn back-btn" title="Back to where you followed the link (Alt+←)" onClick={goBack}>
+            ← Back
+          </button>
+        </div>
+      )}
       <div class="pane-inner" style={{ paddingTop: `${GAP}px`, gap: `${GAP}px`, paddingBottom: `${GAP}px`, paddingLeft: `${PANE_PAD}px`, paddingRight: `${PANE_PAD}px` }}>
         {pages.map((p, i) => (
           <PageView
@@ -155,7 +199,10 @@ export function PdfPane({ pdf, pages, scale, maxWidth, marks, selected, control,
             marks={marks.get(i)}
             selected={selected}
             onMarkClick={onMarkClick}
-            onNavigate={(pos) => control.scrollToDest(pos)}
+            onNavigate={(pos) => {
+              control.pushHistory();
+              control.scrollToDest(pos);
+            }}
           />
         ))}
       </div>
