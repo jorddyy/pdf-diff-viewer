@@ -254,3 +254,73 @@ describe('figures and captions', () => {
     expect(summary).toHaveLength(3);
   });
 });
+
+// A page with numbered body lines, display equations numbered flush right and a ruled table.
+async function makeStructurePdf(equations: { formula: string; number: number }[], table: string[][]): Promise<ArrayBuffer> {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const page = pdf.addPage([595, 842]);
+  const body = garden.slice(0, 12);
+  const right = 65 + Math.max(...body.map((t) => font.widthOfTextAtSize(t, 11)));
+  let y = 780;
+  let line = 1;
+  const paragraph = (text: string) => {
+    page.drawText(String(line++), { x: 30, y, size: 8, font });
+    page.drawText(text, { x: 65, y, size: 11, font });
+    y -= 22;
+  };
+  body.slice(0, 6).forEach(paragraph);
+  for (const { formula, number } of equations) {
+    y -= 8;
+    page.drawText(formula, { x: 160, y, size: 11, font });
+    const label = `(${number})`;
+    page.drawText(label, { x: right - font.widthOfTextAtSize(label, 11), y, size: 11, font });
+    y -= 30;
+  }
+  body.slice(6).forEach(paragraph);
+  y -= 20;
+  page.drawText('Table 1: An invented list of garden measurements.', { x: 65, y, size: 9, font });
+  y -= 14;
+  const rule = (at: number) => page.drawLine({ start: { x: 100, y: at }, end: { x: 400, y: at }, thickness: 0.8, color: rgb(0, 0, 0) });
+  rule(y);
+  for (const [i, row] of table.entries()) {
+    y -= 16;
+    row.forEach((cell, c) => page.drawText(cell, { x: 110 + c * 90, y, size: 10, font }));
+    if (i === 0) { y -= 6; rule(y); }
+  }
+  y -= 8;
+  rule(y);
+  return new Uint8Array(await pdf.save()).buffer;
+}
+
+describe('tables and numbered equations', () => {
+  const header = ['Bed', 'Plants', 'Height'];
+  it('recognises them, and pairs renumbered equations with the same formula', async () => {
+    const old = await extract(await makeStructurePdf(
+      [{ formula: 'E = m c^2', number: 1 }, { formula: 'p = m v', number: 2 }],
+      [header, ['North', '12', '0.8'], ['South', '9', '0.6']],
+    ));
+    const next = await extract(await makeStructurePdf(
+      [{ formula: 'F = m a', number: 1 }, { formula: 'E = m c^2', number: 2 }, { formula: 'p = m v', number: 3 }],
+      [header, ['North', '15', '0.8'], ['South', '9', '0.6']],
+    ));
+    const kinds = (d: DocModel) => d.objects.map((o) => `${o.kind} ${o.number}`);
+    expect(kinds(old)).toEqual(['equation 1', 'equation 2', 'table 1']);
+    expect(kinds(next)).toEqual(['equation 1', 'equation 2', 'equation 3', 'table 1']);
+    expect(old.objects[2].lines).toHaveLength(4); // caption and three rows
+
+    // Equation numbers are placeholders: only the new formula and the table value show up.
+    const al = alignDocs(old, next);
+    expect(al.changes.map((c) => [c.kind, c.cls])).toEqual([['insert', 'equation'], ['replace', 'numeric']]);
+    expect(changed(al.changes[1].aSegs)).toBe('12');
+    expect(changed(al.changes[1].bSegs)).toBe('15');
+
+    const name = (d: DocModel, i: number | null) => (i === null ? null : `${d.objects[i].kind} ${d.objects[i].number}`);
+    const pairs = matchObjects(old, next, al).map((m) => [name(old, m.a), name(next, m.b), m.renumbered]);
+    expect(pairs).toContainEqual(['equation 1', 'equation 2', true]);
+    expect(pairs).toContainEqual(['equation 2', 'equation 3', true]);
+    expect(pairs).toContainEqual([null, 'equation 1', false]);
+    expect(pairs).toContainEqual(['table 1', 'table 1', false]);
+    expect(pairs).toHaveLength(4);
+  });
+});

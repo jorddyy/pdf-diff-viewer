@@ -60,9 +60,11 @@ npx tsx scripts/e2e-export.ts <url> <out-dir> old.pdf new.pdf       # writes exp
   text/number changes, comment persistence, retrying failed loads, worker cleanup, comparison-local
   undo and deletion of stored data. Its PDFs have three invented figures (one new, one
   re-rendered, one unchanged, all renumbered); the first run injects a render
-  failure, the run after the reload renders for real. Only `main` deploys, after checks pass.
+  failure, the run after the reload renders for real. A fourth page has numbered
+  display equations (v2 inserts one) and a ruled table with a changed value. Only `main` deploys, after checks pass.
 - `test/pipeline.test.ts` generates small PDFs in memory and checks extraction
-  through alignment (exact edits, reflow, renumbering, moves, removed pages),
+  through alignment (exact edits, reflow, renumbering, moves, removed pages,
+  figures with captions, numbered equations, ruled tables),
   then reopens both PDF exports to verify text, annotations and summary links.
   It runs with `test:public` and uses no private data or extra dependencies.
 - Stop a background dev server by its port (`ss -ltnp | grep 5199`, then `kill <pid>`). Do not use `pkill -f` or `pgrep -f` with a pattern: it also matches the shell running it and kills that command.

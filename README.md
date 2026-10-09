@@ -95,14 +95,14 @@ npm run e2e -- http://localhost:5173/ out/ old.pdf new.pdf   # BROWSER=firefox f
 
 GitHub Actions checks pushes to `main` and pull requests with TypeScript, public
 tests, a production build and a Firefox smoke test. The smoke test creates its
-own invented PDFs (with figures and captions) and checks text/number changes,
-figure pairing across renumbering, saved comments, reload, worker cleanup,
+own invented PDFs (with figures, captions, numbered equations and a table) and
+checks text/number changes, figure and equation pairing across renumbering, saved comments, reload, worker cleanup,
 retrying failed loads and clearing stored data. Only successful checks on `main`
 deploy to GitHub Pages; pull requests have read-only repository permissions.
 
 The public suite also generates small PDFs in memory to check exact text and
 number changes, reflow and line numbering, reference renumbering, paragraph
-reordering and page deletion. It reopens both export formats with pdf.js to
+reordering, page deletion, figures, numbered equations and ruled tables. It reopens both export formats with pdf.js to
 verify preserved text, highlight positions, deletion carets and summary links.
 These checks use the existing dependencies and take a few seconds locally.
 

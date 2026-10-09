@@ -57,6 +57,39 @@ for (const version of [1, 2]) {
       });
     }
   }
+  // Page 4: display equations numbered flush right (v2 inserts one, renumbering the rest) and a ruled table.
+  {
+    const page = pdf.addPage([595, 842]);
+    const prose = (line: number) => `This is invented paragraph ${line} describing a quiet garden and its plants.`;
+    const right = 65 + font.widthOfTextAtSize(prose(55), 11);
+    let y = 780;
+    let line = 43;
+    const paragraph = () => {
+      page.drawText(String(line), { x: 30, y, size: 9, font });
+      page.drawText(prose(line++), { x: 65, y, size: 11, font });
+      y -= 30;
+    };
+    for (let i = 0; i < 6; i++) paragraph();
+    const formulas = version === 1 ? ['E = m c^2', 'p = m v'] : ['F = m a', 'E = m c^2', 'p = m v'];
+    formulas.forEach((formula, i) => {
+      const label = `(${i + 1})`;
+      page.drawText(formula, { x: 180, y, size: 11, font });
+      page.drawText(label, { x: right - font.widthOfTextAtSize(label, 11), y, size: 11, font });
+      y -= 30;
+    });
+    for (let i = 0; i < 6; i++) paragraph();
+    y -= 10;
+    page.drawText('Table 1: An invented list of garden measurements.', { x: 65, y, size: 9, font });
+    y -= 14;
+    const rule = (at: number) => page.drawLine({ start: { x: 100, y: at }, end: { x: 400, y: at }, thickness: 0.8, color: rgb(0, 0, 0) });
+    rule(y);
+    [['Bed', 'Plants', 'Height'], ['North', version === 1 ? '31' : '37', '0.8'], ['South', '9', '0.6']].forEach((row, i) => {
+      y -= 16;
+      row.forEach((cell, c) => page.drawText(cell, { x: 110 + c * 90, y, size: 10, font }));
+      if (i === 0) { y -= 6; rule(y); }
+    });
+    rule(y - 8);
+  }
   const file = path.join(dir, `synthetic.v${version}.pdf`);
   await fs.writeFile(file, await pdf.save());
   files.push(file);
@@ -152,6 +185,13 @@ try {
   assert.equal(await page.$$eval('.vchip', (es) => es.length), 2);
   console.log('PASS a failed PDF can be retried without duplicate versions');
   console.log('PASS synthetic PDFs render and text/number changes are detected');
+  // Equation numbers are placeholders, so the inserted formula is the only equation entry.
+  const listed = await page.$$eval('.change-list .chg:not(.fig)', (es) => es.map((e) => e.textContent ?? ''));
+  assert.deepEqual(listed.filter((t) => t.includes('Equation')).length, 1, listed.join('\n'));
+  assert.match(listed.find((t) => t.includes('Equation')) ?? '', /F = m a/);
+  assert.ok(listed.some((t) => t.includes('Number') && t.includes('31') && t.includes('37')), 'table value change');
+  assert.ok(!listed.some((t) => /Renumbered/.test(t)), 'renumbering is hidden by default');
+  console.log('PASS a new numbered equation and a changed table value are listed, renumbering is not');
   await page.waitForFunction(() => document.querySelector('.note')?.textContent?.includes('could not be compared'));
   // A new figure, and the old first figure now numbered 2. The unchanged ring is only a renumbering.
   const figureEntries = () => page.$$eval('.chg.fig', (es) => es.map((e) => e.textContent ?? ''));
