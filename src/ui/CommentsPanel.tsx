@@ -1,3 +1,4 @@
+import { Tex } from './Tex';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { CommentItem, ParsedComments } from '../comments/parse';
 import type { CommentResolution, RefStatus } from '../comments/resolve';
@@ -297,11 +298,11 @@ export function CommentsPanel(p: Props) {
                     ×
                   </button>
                 </div>
-                {it.quoted && <div class="snip quoted">{it.quoted}</div>}
-                <div class="snip new">{it.text}</div>
+                {it.quoted && <div class="snip quoted"><Tex text={it.quoted} /></div>}
+                <div class="snip new"><Tex text={it.text} /></div>
                 {it.reply && (
                   <div class="snip reply">
-                    <b>Reply:</b> {it.reply}
+                    <b>Reply:</b> <Tex text={it.reply} />
                   </div>
                 )}
                 {p.selected === key && (

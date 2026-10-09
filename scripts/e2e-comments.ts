@@ -27,7 +27,7 @@ await (await page.$('input[type=file]'))!.uploadFile(...pdfs.map((p) => path.res
 const t0 = Date.now();
 await page.waitForSelector('.change-list', { timeout: 300_000 });
 console.log(`diff ready after ${((Date.now() - t0) / 1000).toFixed(1)} s`);
-await page.evaluate(() => (document.querySelectorAll('.tabs button')[1] as HTMLElement).click());
+await page.evaluate(() => ([...document.querySelectorAll('.tabs button')].find((b) => b.textContent?.trim().startsWith('Comments')) as HTMLElement).click());
 await page.waitForSelector('.comments textarea');
 await page.$eval('.comments textarea', (el, text) => {
   const ta = el as HTMLTextAreaElement;

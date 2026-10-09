@@ -1340,3 +1340,26 @@ code {
 .toc-count.num {
   background: var(--num);
 }
+
+/* Border of PDF links, as drawn by other viewers (colour comes from the PDF) */
+.overlay.links {
+  pointer-events: none;
+}
+
+.lk {
+  position: absolute;
+  box-sizing: border-box;
+  border-style: solid;
+}
+
+/* Typeset formulas in comments */
+.tex math {
+  font-size: 1.05em;
+  color: var(--text);
+}
+
+/* Display formulas stay in the flow of the (line-clamped) comment text */
+.tex math[display='block'] {
+  display: inline-block;
+  margin: 0;
+}

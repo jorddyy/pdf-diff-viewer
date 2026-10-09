@@ -181,6 +181,15 @@ interface PageLink {
   url?: string;
   /** Resolved lazily: named destinations need a lookup. */
   dest?: unknown;
+  /** The PDF's own border (hyperref draws red/green/cyan boxes); null when the link has none. */
+  border: { color: string; width: number } | null;
+}
+
+function linkBorder(a: { color?: ArrayLike<number> | null; borderStyle?: { width?: number } | null }): PageLink['border'] {
+  const width = a.borderStyle?.width ?? 1;
+  if (width <= 0) return null;
+  const c = a.color && a.color.length >= 3 ? a.color : [0, 0, 0];
+  return { color: `rgb(${c[0]} ${c[1]} ${c[2]})`, width };
 }
 
 /** Page index and y (page coordinates, top-left origin) a PDF destination points at. */
@@ -245,7 +254,7 @@ function PageView({ pdf, index, width, height, scale, marks, selected, onMarkCli
             if (a.subtype !== 'Link' || !a.rect || !(a.url || a.dest)) continue;
             const [x0, y0] = vp.convertToViewportPoint(a.rect[0], a.rect[1]);
             const [x1, y1] = vp.convertToViewportPoint(a.rect[2], a.rect[3]);
-            out.push({ box: [Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)], url: a.url ?? undefined, dest: a.dest });
+            out.push({ box: [Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)], url: a.url ?? undefined, dest: a.dest, border: linkBorder(a) });
           }
           setLinks(out);
         })
@@ -376,6 +385,25 @@ function PageView({ pdf, index, width, height, scale, marks, selected, onMarkCli
             {m.label && <span class="mk-label">{m.label}</span>}
           </div>
         ))}
+      </div>
+      <div class="overlay links">
+        {links.map(
+          (l, k) =>
+            l.border && (
+              <div
+                key={k}
+                class="lk"
+                style={{
+                  left: `${l.box[0] * scale}px`,
+                  top: `${l.box[1] * scale}px`,
+                  width: `${(l.box[2] - l.box[0]) * scale}px`,
+                  height: `${(l.box[3] - l.box[1]) * scale}px`,
+                  borderColor: l.border.color,
+                  borderWidth: `${Math.max(1, l.border.width * scale)}px`,
+                }}
+              />
+            ),
+        )}
       </div>
       <div class="textLayer" ref={textRef} />
       <div class="pno">{index + 1}</div>

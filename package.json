@@ -18,7 +18,8 @@
     "@pdfme/pdf-lib": "^6.2.2",
     "diff": "^9.0.0",
     "pdfjs-dist": "^6.3.289",
-    "preact": "^11.0.0"
+    "preact": "^11.0.0",
+    "temml": "^0.14.0"
   },
   "devDependencies": {
     "@preact/preset-vite": "^2.10.6",
