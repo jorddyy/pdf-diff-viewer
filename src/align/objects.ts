@@ -115,7 +115,7 @@ export function matchObjects(A: DocModel, B: DocModel, al: Alignment): ObjectMat
   // Same kind and number, both still unmatched.
   for (const oa of A.objects) {
     if (usedA.has(oa.id) || !oa.number) continue;
-    const ob = B.objects.find((o) => !usedB.has(o.id) && o.kind === oa.kind && o.number === oa.number && !unrelated(oa, o));
+    const ob = B.objects.find((o) => !usedB.has(o.id) && o.kind === oa.kind && o.number === oa.number && !unrelated(oa, o, A, B));
     if (!ob) continue;
     usedA.add(oa.id);
     usedB.add(ob.id);
@@ -183,12 +183,16 @@ function captionSimilarity(a: DocObject, b: DocObject): number {
   return (2 * inter) / (nx + ny);
 }
 
-/** Captions of figures and tables that share (almost) nothing: the same number by coincidence. */
-function unrelated(a: DocObject, b: DocObject): boolean {
+/** Figures and tables with the same number but different captions and places: a coincidence. */
+function unrelated(a: DocObject, b: DocObject, A: DocModel, B: DocModel): boolean {
   if (a.kind === 'equation') return false;
   const nx = words(a.caption).size;
   const ny = words(b.caption).size;
-  return nx >= 4 && ny >= 4 && captionSimilarity(a, b) < 0.15;
+  if (nx < 4 || ny < 4) return false;
+  // Same number is enough evidence only when the captions agree or the object sits at the same place.
+  const moved = Math.abs(a.page / A.numPages - b.page / B.numPages);
+  const sim = captionSimilarity(a, b);
+  return sim < 0.15 || (sim < 0.3 && moved > 0.04);
 }
 
 /** Intersection over union of two boxes. */
