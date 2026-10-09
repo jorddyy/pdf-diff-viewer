@@ -1,9 +1,10 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { PDFDocument, StandardFonts } from '@pdfme/pdf-lib';
+import { PDFDocument, StandardFonts, rgb } from '@pdfme/pdf-lib';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { extractDocument } from '../src/extract/document';
 import { nodeInflate } from '../scripts/node-pdf';
 import { alignDocs, type Segment } from '../src/align/align';
+import { matchObjects } from '../src/align/objects';
 import { buildAnnotated, textChangeSpecs } from '../src/export/annotated';
 import { buildSideBySide } from '../src/export/sideBySide';
 import { sideMarks } from '../src/ui/marks';
@@ -200,5 +201,56 @@ describe('exported PDF round trips', () => {
         expect(await pdf.getPageIndex(link.dest[0])).toBe(1);
       }
     } finally { await pdf.loadingTask.destroy(); }
+  });
+});
+
+// Invented drawings embedded as form XObjects, like \includegraphics of a PDF plot.
+type Art = { shape: 'bar' | 'ring' | 'cross'; size?: number };
+async function makeFigurePdf(figures: { caption: string; art: Art }[]): Promise<ArrayBuffer> {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const page = pdf.addPage([595, 842]);
+  garden.slice(0, 6).forEach((text, row) => {
+    page.drawText(String(row + 1), { x: 30, y: 780 - row * 30, size: 8, font });
+    page.drawText(text, { x: 65, y: 780 - row * 30, size: 11, font });
+  });
+  for (const [slot, { caption, art }] of figures.entries()) {
+    const drawing = await PDFDocument.create();
+    const sheet = drawing.addPage([150, 100]);
+    const color = rgb(0.2, 0.3, 0.4);
+    if (art.shape === 'bar') sheet.drawRectangle({ x: 10, y: 10, width: art.size ?? 45, height: 70, color });
+    if (art.shape === 'ring') sheet.drawCircle({ x: 75, y: 50, size: 35, borderColor: color, borderWidth: 6 });
+    if (art.shape === 'cross') {
+      sheet.drawLine({ start: { x: 10, y: 10 }, end: { x: 140, y: 90 }, thickness: 5, color });
+      sheet.drawLine({ start: { x: 10, y: 90 }, end: { x: 140, y: 10 }, thickness: 5, color });
+    }
+    const [form] = await pdf.embedPdf(await drawing.save());
+    const y = 490 - slot * 170;
+    page.drawPage(form, { x: 100, y, width: 200, height: 130 });
+    page.drawText(caption, { x: 65, y: y - 25, size: 9, font });
+  }
+  return new Uint8Array(await pdf.save()).buffer;
+}
+
+describe('figures and captions', () => {
+  it('pairs renumbered figures by caption and fingerprint, and reports a new one', async () => {
+    const old = await extract(await makeFigurePdf([
+      { caption: 'Figure 1: An invented geometric pattern of bars.', art: { shape: 'bar' } },
+      { caption: 'Figure 2: An invented ring of small stones.', art: { shape: 'ring' } },
+    ]));
+    const next = await extract(await makeFigurePdf([
+      { caption: 'Figure 1: Watering cans lined up beside the shed.', art: { shape: 'cross' } },
+      { caption: 'Figure 2: An invented geometric pattern of bars.', art: { shape: 'bar', size: 100 } },
+      { caption: 'Figure 3: An invented ring of small stones.', art: { shape: 'ring' } },
+    ]));
+    expect(old.objects.filter((o) => o.kind === 'figure').map((o) => o.number)).toEqual(['1', '2']);
+    expect(next.objects.filter((o) => o.kind === 'figure').map((o) => o.number)).toEqual(['1', '2', '3']);
+    const matches = matchObjects(old, next, alignDocs(old, next)).filter((m) => m.kind === 'figure');
+    const num = (doc: DocModel, i: number | null) => (i === null ? null : doc.objects[i].number);
+    const summary = matches.map((m) => [num(old, m.a), num(next, m.b), m.status, m.renumbered]);
+    expect(summary).toContainEqual(['1', '2', 'pending', true]);
+    expect(summary).toContainEqual(['2', '3', 'identical', true]);
+    expect(summary).toContainEqual([null, '1', 'added', false]);
+    expect(summary).toHaveLength(3);
   });
 });

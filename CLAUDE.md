@@ -58,7 +58,9 @@ npx tsx scripts/e2e-export.ts <url> <out-dir> old.pdf new.pdf       # writes exp
 - `scripts/e2e-smoke.ts` generates invented PDFs under `e2e-tmp/` and runs without
   private samples. CI runs it on pushes to `main` and pull requests. It verifies
   text/number changes, comment persistence, retrying failed loads, worker cleanup, comparison-local
-  undo and deletion of stored data. Only `main` deploys, after checks pass.
+  undo and deletion of stored data. Its PDFs have three invented figures (one new, one
+  re-rendered, one unchanged, all renumbered); the first run injects a render
+  failure, the run after the reload renders for real. Only `main` deploys, after checks pass.
 - `test/pipeline.test.ts` generates small PDFs in memory and checks extraction
   through alignment (exact edits, reflow, renumbering, moves, removed pages),
   then reopens both PDF exports to verify text, annotations and summary links.

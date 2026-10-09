@@ -15,13 +15,33 @@ const files: string[] = [];
 for (const version of [1, 2]) {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const artwork = await PDFDocument.create();
-  const shape = artwork.addPage([150, 100]);
-  shape.drawRectangle({ x: 10, y: 10, width: version === 1 ? 45 : 100, height: 70, color: rgb(0.2, 0.3, 0.4) });
-  const [figure] = await pdf.embedPdf(await artwork.save());
+  // Invented drawings as form XObjects, like \includegraphics of a PDF plot.
+  const drawing = async (shape: 'bar' | 'ring' | 'cross', barWidth = 45) => {
+    const art = await PDFDocument.create();
+    const sheet = art.addPage([150, 100]);
+    const color = rgb(0.2, 0.3, 0.4);
+    if (shape === 'bar') sheet.drawRectangle({ x: 10, y: 10, width: barWidth, height: 70, color });
+    if (shape === 'ring') sheet.drawCircle({ x: 75, y: 50, size: 35, borderColor: color, borderWidth: 6 });
+    if (shape === 'cross') {
+      sheet.drawLine({ start: { x: 10, y: 10 }, end: { x: 140, y: 90 }, thickness: 5, color });
+      sheet.drawLine({ start: { x: 10, y: 90 }, end: { x: 140, y: 10 }, thickness: 5, color });
+    }
+    return (await pdf.embedPdf(await art.save()))[0];
+  };
+  // v1: bars (changes), ring (unchanged). v2: a new first figure, so both are renumbered.
+  const figures = version === 1
+    ? [
+        { form: await drawing('bar'), caption: 'Figure 1: An invented geometric pattern of bars.' },
+        { form: await drawing('ring'), caption: 'Figure 2: An invented ring of small stones.' },
+      ]
+    : [
+        { form: await drawing('cross'), caption: 'Figure 1: Watering cans lined up beside the shed.' },
+        { form: await drawing('bar', 100), caption: 'Figure 2: An invented geometric pattern of bars.' },
+        { form: await drawing('ring'), caption: 'Figure 3: An invented ring of small stones.' },
+      ];
   for (let pageIndex = 0; pageIndex < 3; pageIndex++) {
     const page = pdf.addPage([595, 842]);
-    for (let row = 0; row < (pageIndex === 2 ? 9 : 18); row++) {
+    for (let row = 0; row < (pageIndex === 2 ? 6 : 18); row++) {
       const line = pageIndex * 18 + row + 1;
       const text = line === 5 ? `The sample colour is ${version === 1 ? 'amber' : 'cobalt'}.`
         : line === 9 ? `The box contains ${version === 1 ? '12' : '18'} wooden blocks.`
@@ -30,8 +50,11 @@ for (const version of [1, 2]) {
       page.drawText(text, { x: 65, y: 780 - row * 30, size: 11, font });
     }
     if (pageIndex === 2) {
-      page.drawPage(figure, { x: 100, y: 300, width: 200, height: 130 });
-      page.drawText('Figure 1: An invented geometric pattern.', { x: 65, y: 275, size: 9, font });
+      figures.forEach(({ form, caption }, slot) => {
+        const y = 490 - slot * 170;
+        page.drawPage(form, { x: 100, y, width: 200, height: 130 });
+        page.drawText(caption, { x: 65, y: y - 25, size: 9, font });
+      });
     }
   }
   const file = path.join(dir, `synthetic.v${version}.pdf`);
@@ -130,9 +153,14 @@ try {
   console.log('PASS a failed PDF can be retried without duplicate versions');
   console.log('PASS synthetic PDFs render and text/number changes are detected');
   await page.waitForFunction(() => document.querySelector('.note')?.textContent?.includes('could not be compared'));
-  assert.equal(await page.$$eval('.chg.fig', (es) => es.length), 1);
-  assert.match(await page.$eval('.chg.fig', (el) => el.textContent ?? ''), /change status unknown/);
-  assert.doesNotMatch(await page.$eval('.chg.fig .badge', (el) => el.textContent ?? ''), /changed/i);
+  // A new figure, and the old first figure now numbered 2. The unchanged ring is only a renumbering.
+  const figureEntries = () => page.$$eval('.chg.fig', (es) => es.map((e) => e.textContent ?? ''));
+  const entries = await figureEntries();
+  assert.equal(entries.length, 2);
+  assert.match(entries.find((t) => t.includes('New in this version')) ?? '', /Figure 1/);
+  const pair = entries.find((t) => t.includes('Figure 1 → Figure 2')) ?? '';
+  assert.match(pair, /change status unknown/);
+  assert.doesNotMatch(pair, /Figure changed/i);
   console.log('PASS a figure rendering failure stays unknown with a visible note');
 
   await clickText('.tabs button', 'Comments');
@@ -149,6 +177,16 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('.chg.cmt').length === 2 && document.querySelectorAll('.chg.cmt.done').length === 1);
   assert.equal(await page.$$eval('.vchip', (es) => es.length), 2);
   console.log('PASS reload restores PDFs, review comments and done ticks');
+
+  // After the reload nothing blocks rendering: the re-rendered bars are compared and reported as changed.
+  await clickText('.tabs button', 'Changes');
+  await page.waitForFunction(() => [...document.querySelectorAll('.chg.fig')].some((e) => /Figure 1 → Figure 2/.test(e.textContent ?? '') && /changed/i.test(e.querySelector('.badge')?.textContent ?? '')));
+  assert.equal(await page.$('.note'), null, 'No failure note once figures can be compared');
+  const settled = await page.$$eval('.chg.fig', (es) => es.map((e) => e.textContent ?? ''));
+  assert.equal(settled.length, 2);
+  assert.ok(settled.every((t) => !/status unknown/.test(t)));
+  console.log('PASS figures are paired across renumbering and a re-rendered figure is reported as changed');
+  await clickText('.tabs button', 'Comments');
 
   await page.click('.chg.cmt .x.del');
   await page.waitForSelector('.toast');
