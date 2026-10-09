@@ -80,6 +80,8 @@ export function parseComments(md: string): ParsedComments {
   let cur: { parts: SrcLine[]; quoted: SrcLine[]; reply: SrcLine[]; list: boolean; indent: number } | null = null;
   // The last quoted comment + reply, waiting for the reviewer's follow-up paragraph.
   let thread: { quoted: SrcLine[]; reply: SrcLine[] } | null = null;
+  // The newest item still accepts a reply that follows it (`>Ans: …`) until something else comes up.
+  let lastPushed = false;
 
   const flush = () => {
     if (!cur) return;
@@ -102,7 +104,7 @@ export function parseComments(md: string): ParsedComments {
       id: items.length,
       text: stripMarkers(body),
       quoted: stripMarkers(c.quoted.map((l) => l.text.replace(QUOTE, '')).join('\n').trim()),
-      reply: stripMarkers(c.reply.map((l) => l.text.replace(QUOTE, '')).join('\n').trim()),
+      reply: cleanReply(c.reply),
       round,
       section,
       notes,
@@ -114,6 +116,7 @@ export function parseComments(md: string): ParsedComments {
       span: [first.start, Math.min(md.length, last.start + last.text.length + 1)],
       key: stableKey(`${round}|${body}|${c.quoted.map((l) => l.text).join('\n')}`),
     });
+    lastPushed = true;
   };
   /** The source line containing an offset. */
   const lineAt = (offset: number): SrcLine => {
@@ -132,6 +135,7 @@ export function parseComments(md: string): ParsedComments {
     const h = HEADING.exec(t);
     if (h) {
       flush();
+      lastPushed = false;
       thread = null;
       const level = h[1].length;
       const title = h[2].replace(/[*_`]/g, '').replace(/:\s*$/, '').trim();
@@ -152,6 +156,7 @@ export function parseComments(md: string): ParsedComments {
     }
     if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(t) || /^\s*#{6}\s/.test(t)) {
       flush();
+      lastPushed = false;
       thread = null;
       continue;
     }
@@ -176,8 +181,17 @@ export function parseComments(md: string): ParsedComments {
     }
     if (depth === 1) {
       if (thread) thread.reply.push(line);
+      else if (cur) cur.reply.push(line);
+      else if (lastPushed && items.length) {
+        // The comment was already closed by a blank line: the reply belongs to it.
+        const it = items[items.length - 1];
+        const lines2 = [...(it.reply ? [it.reply] : []), cleanReply([line])].filter(Boolean);
+        it.reply = lines2.join('\n');
+        it.span = [it.span[0], Math.min(md.length, line.start + line.text.length + 1)];
+      }
       continue;
     }
+    lastPushed = false;
     // Plain text or list item.
     const indent = listMatch ? listMatch[1].length : (/^\s*/.exec(t)?.[0].length ?? 0);
     if (thread) {
@@ -201,6 +215,18 @@ export function parseComments(md: string): ParsedComments {
   }
   flush();
   return { rounds, items };
+}
+
+const REPLY_PREFIX = /^\s*(?:\*\*)?(?:(?:ans(?:wer)?|repl(?:y|ies)|response|authors?)\s*:\s*(?:\*\*)?\s*)+/i;
+
+/** Quoted reply lines as plain text: no quote markers, no image-only lines, no "Ans:" label. */
+function cleanReply(ls: SrcLine[]): string {
+  const text = ls
+    .map((l) => l.text.replace(QUOTE, ''))
+    .filter((t) => !/^\s*!\[[^\]]*\]\([^)]*\)\s*$/.test(t))
+    .join('\n')
+    .trim();
+  return stripMarkers(text.replace(REPLY_PREFIX, ''));
 }
 
 function stripMarkers(s: string): string {

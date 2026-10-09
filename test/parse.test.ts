@@ -102,3 +102,28 @@ describe('removeItem', () => {
     expect(edited.items.find((i) => i.text.includes('"teh"'))!.key).toBe(it2.key);
   });
 });
+
+describe('replies below a comment', () => {
+  const doc = [
+    '## Round 1',
+    '- L5: first remark',
+    '>Ans:Ans: done, thanks',
+    '>',
+    '>![](https://example.org/a.png)',
+    '- L9: second remark',
+    '> Reply: kept as is',
+    '',
+    '- L12: third remark',
+    '',
+  ].join('\n');
+  const items = parseComments(doc).items;
+
+  it('takes quoted lines after a comment as its reply, whatever the label', () => {
+    expect(items.map((i) => i.reply)).toEqual(['done, thanks', 'kept as is', '']);
+    expect(items.map((i) => i.text)).toEqual(['L5: first remark', 'L9: second remark', 'L12: third remark']);
+  });
+
+  it('removes the reply together with the comment', () => {
+    expect(removeItem(doc, items[0])).not.toContain('done, thanks');
+  });
+});

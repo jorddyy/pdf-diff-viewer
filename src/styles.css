@@ -891,6 +891,30 @@ select {
   -webkit-line-clamp: 2;
 }
 
+.snip.reply {
+  border-left: 2px solid var(--accent, var(--line));
+  padding-left: 6px;
+  -webkit-line-clamp: 2;
+}
+
+.chg.cmt.sel .snip {
+  display: block;
+  -webkit-line-clamp: unset;
+}
+
+.src {
+  margin: 4px 0 0;
+  padding: 4px 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  background: var(--bg-alt, transparent);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  max-height: 240px;
+  overflow: auto;
+}
+
 .chg.cmt .snip.new {
   color: var(--text);
 }

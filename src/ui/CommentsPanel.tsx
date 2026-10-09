@@ -74,6 +74,7 @@ export function CommentsPanel(p: Props) {
   const [showNotes, setShowNotes] = useState(false);
   const [hideDone, setHideDone] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [sourceKey, setSourceKey] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -298,6 +299,23 @@ export function CommentsPanel(p: Props) {
                 </div>
                 {it.quoted && <div class="snip quoted">{it.quoted}</div>}
                 <div class="snip new">{it.text}</div>
+                {it.reply && (
+                  <div class="snip reply">
+                    <b>Reply:</b> {it.reply}
+                  </div>
+                )}
+                {p.selected === key && (
+                  <button
+                    class="link src-toggle"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSourceKey(sourceKey === key ? null : key);
+                    }}
+                  >
+                    {sourceKey === key ? 'Hide source' : 'Show source'}
+                  </button>
+                )}
+                {p.selected === key && sourceKey === key && <pre class="src">{p.text.slice(it.span[0], it.span[1]).trim()}</pre>}
                 {r.refs.some((x) => x.note) && <div class="small">{r.refs.map((x) => x.note).filter(Boolean).join('; ')}</div>}
                 {p.showHistory && hist && (
                   <div class="hist">
