@@ -58,7 +58,7 @@ export function CompareModal({ req, onClose }: { req: CompareRequest; onClose: (
   }, [onClose, comparable]);
   return (
     <div class="modal-back" onClick={onClose}>
-      <div class="modal" role="dialog" aria-label={req.title} tabIndex={-1} ref={dialog} onClick={(e) => e.stopPropagation()}>
+      <div class="modal" role="dialog" aria-label={req.title} onClick={(e) => e.stopPropagation()}>
         <div class="modal-head">
           <strong>{req.title}</strong>
           {comparable && <div class="modes" role="tablist">
@@ -72,7 +72,8 @@ export function CompareModal({ req, onClose }: { req: CompareRequest; onClose: (
             ×
           </button>
         </div>
-        <div class="modal-body">
+        {/* Focused so that arrow keys and Page Down scroll the panels. */}
+        <div class="modal-body" tabIndex={-1} ref={dialog}>
           {shown.map((p, i) => (
             <PairView key={i} pair={p} mode={mode} aLabel={req.aLabel} bLabel={req.bLabel} />
           ))}

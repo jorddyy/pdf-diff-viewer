@@ -34,7 +34,8 @@ notes:
 Everything runs locally in the browser tab: PDFs and comments are never
 uploaded. Comparisons are saved in the browser (IndexedDB) automatically: a
 reload brings back where you were, and the start page lists recent
-comparisons. "Clear stored data" on the start page removes everything.
+comparisons. Figure comparisons are remembered too, so reopening a comparison
+does not render every figure again. "Clear stored data" on the start page removes everything.
 
 ## Using it
 

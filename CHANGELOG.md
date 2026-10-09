@@ -7,6 +7,16 @@ The running version is shown next to the title in the app (hover for the commit)
 
 ## [Unreleased]
 
+### Changed
+- Figure comparison results are remembered in the browser: reopening a comparison
+  (or reloading the page) shows figure changes at once instead of rendering every
+  figure again. "Clear stored data" removes them as well.
+
+### Fixed
+- Compare dialog: in Firefox, figures with several large panels ran off the bottom of
+  the window and could not be scrolled. The dialog now fits the window and scrolls
+  (also with Page Down and the arrow keys).
+
 ## [0.3.0] - 2026-10-09
 
 ### Added

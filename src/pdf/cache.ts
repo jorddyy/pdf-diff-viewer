@@ -41,6 +41,17 @@ interface Entry {
   at: number;
 }
 
+/** Result of one figure comparison, as shown in the change list. */
+export interface FigureResult {
+  status: 'changed' | 'identical';
+  diffs: (number | null)[];
+}
+
+interface FigureEntry {
+  figures: Record<string, FigureResult>;
+  at: number;
+}
+
 export async function getCached(hash: string): Promise<DocModel | null> {
   try {
     const e = (await tx('readonly', (s) => s.get(`${EXTRACT_VERSION}:${hash}`))) as Entry | undefined;
@@ -61,6 +72,29 @@ export async function putCached(hash: string, doc: DocModel): Promise<void> {
     }
   } catch {
     // Storage unavailable or full: run without cache.
+  }
+}
+
+/**
+ * Figure comparison results of one pair of PDFs, keyed by the compared regions
+ * (see `figureKey` in app.tsx). Rendering every changed figure takes minutes for
+ * large notes, so reopening a comparison reuses them. `version` is
+ * `COMPARE_VERSION`, bumped when rendering or the ink comparison changes.
+ */
+export async function getFigureResults(version: number, hashA: string, hashB: string): Promise<Record<string, FigureResult>> {
+  try {
+    const e = (await tx('readonly', (s) => s.get(`fig${version}:${hashA}:${hashB}`))) as FigureEntry | undefined;
+    return e?.figures ?? {};
+  } catch {
+    return {};
+  }
+}
+
+export async function putFigureResults(version: number, hashA: string, hashB: string, figures: Record<string, FigureResult>): Promise<void> {
+  try {
+    await tx('readwrite', (s) => s.put({ figures, at: Date.now() } satisfies FigureEntry, `fig${version}:${hashA}:${hashB}`));
+  } catch {
+    // Storage unavailable or full: figures are compared again next time.
   }
 }
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { extractInBrowser, openForCompare, openForDisplay, sha256, type PageSize } from './pdf/load';
-import { clearCache, getCached, putCached } from './pdf/cache';
+import { clearCache, getCached, getFigureResults, putCached, putFigureResults, type FigureResult } from './pdf/cache';
 import { alignDocs, type Alignment } from './align/align';
 import type { DocModel } from './extract/types';
 import { PANE_PAD, PageBox, PaneControl, PdfPane, type InputKind } from './ui/PdfPane';
@@ -12,7 +12,7 @@ import { buildAnnotated, textChangeSpecs, type AnnotationSpec } from './export/a
 import type { SummaryItem } from './export/types';
 import { CompareModal, type CompareRequest } from './ui/CompareModal';
 import { matchObjects, type FigureStatus, type ObjectMatch } from './align/objects';
-import { CHANGED_THRESHOLD, inkDiff, renderRegions, type Raster } from './figures/compare';
+import { CHANGED_THRESHOLD, COMPARE_VERSION, inkDiff, renderRegions, type Raster } from './figures/compare';
 import { addFigureMarks, panelStates, sideMarks, type PanelState, type Side } from './ui/marks';
 import { buildSyncMap, mapPos } from './ui/sync';
 import { parseComments, removeItem } from './comments/parse';
@@ -449,36 +449,65 @@ export function App() {
     const [da, db] = [A.doc, B.doc];
     let pa: PDFDocumentProxy | null = null;
     let pb: PDFDocumentProxy | null = null;
+    const [ha, hb] = [A.hash, B.hash];
     (async () => {
+      // Results from an earlier session with the same PDFs and the same compared regions.
+      const known = await getFigureResults(COMPARE_VERSION, ha, hb);
+      if (cancelled) return;
+      const queue: ObjectMatch[] = [];
+      const reused = new Map<number, FigureResult>();
+      for (const m of figs) {
+        if (m.status !== 'pending' || m.a === null || m.b === null) continue;
+        const r = known[figureKey(da, db, m)];
+        if (r) reused.set(m.id, r);
+        else queue.push(m);
+      }
+      if (reused.size) setFigStatus((prev) => new Map([...prev, ...reused]));
+      if (!queue.length) return;
       const opened = await Promise.allSettled([openForCompare(A.bytes), openForCompare(B.bytes)]);
       pa = opened[0].status === 'fulfilled' ? opened[0].value : null;
       pb = opened[1].status === 'fulfilled' ? opened[1].value : null;
       if (!pa || !pb) throw new Error('Could not open PDFs for figure comparison');
-      for (const m of figs) {
-        if (cancelled) return;
-        if (m.status !== 'pending' || m.a === null || m.b === null) continue;
-        const oa = da.objects[m.a];
-        const ob = db.objects[m.b];
-        const todo = m.parts.filter((p) => !p.sameHash && p.a !== null && p.b !== null);
-        let ra: Raster[] = [];
-        let rb: Raster[] = [];
-        try {
-          if (todo.length) {
-            ra = await renderRegions(pa!, oa.page, todo.map((p) => oa.parts[p.a!]), 240);
-            rb = await renderRegions(pb!, ob.page, todo.map((p) => ob.parts[p.b!]), 240);
+      let dirty = false;
+      const save = () => {
+        if (!dirty) return;
+        dirty = false;
+        void putFigureResults(COMPARE_VERSION, ha, hb, known);
+      };
+      const saver = setInterval(save, 5000);
+      try {
+        for (const m of queue) {
+          if (cancelled) return;
+          const oa = da.objects[m.a!];
+          const ob = db.objects[m.b!];
+          const todo = m.parts.filter((p) => !p.sameHash && p.a !== null && p.b !== null);
+          let ra: Raster[] = [];
+          let rb: Raster[] = [];
+          try {
+            if (todo.length) {
+              ra = await renderRegions(pa!, oa.page, todo.map((p) => oa.parts[p.a!]), 240);
+              rb = await renderRegions(pb!, ob.page, todo.map((p) => ob.parts[p.b!]), 240);
+            }
+          } catch {
+            if (!cancelled) setFigError('Some figures could not be compared. Their status is unknown; reopen this comparison to retry.');
+            continue;
           }
-        } catch {
-          if (!cancelled) setFigError('Some figures could not be compared. Their status is unknown; reopen this comparison to retry.');
-          continue;
+          if (cancelled) return;
+          const diffs = m.parts.map((p) => {
+            if (p.sameHash) return 0;
+            const k = todo.indexOf(p);
+            return k >= 0 && ra[k] && rb[k] ? inkDiff(ra[k], rb[k]) : null;
+          });
+          const changed = diffs.some((d) => d === null || d > CHANGED_THRESHOLD) || !m.parts.length;
+          const result: FigureResult = { status: changed ? 'changed' : 'identical', diffs };
+          setFigStatus((prev) => new Map(prev).set(m.id, result));
+          // Only successful comparisons are kept; failures are retried next time.
+          known[figureKey(da, db, m)] = result;
+          dirty = true;
         }
-        if (cancelled) return;
-        const diffs = m.parts.map((p) => {
-          if (p.sameHash) return 0;
-          const k = todo.indexOf(p);
-          return k >= 0 && ra[k] && rb[k] ? inkDiff(ra[k], rb[k]) : null;
-        });
-        const changed = diffs.some((d) => d === null || d > CHANGED_THRESHOLD) || !m.parts.length;
-        setFigStatus((prev) => new Map(prev).set(m.id, { status: changed ? 'changed' : 'identical', diffs }));
+      } finally {
+        clearInterval(saver);
+        save();
       }
     })().catch(() => {
       if (cancelled) return;
@@ -1392,4 +1421,14 @@ function panelSummary(m: ObjectMatch, diffs: (number | null)[] | undefined): str
     .filter(([l]) => l)
     .map(([l, w]) => `${l} ${w}`);
   return parts.length ? parts.join(' · ') : 'The graphics differ.';
+}
+
+/**
+ * Identifies one figure comparison: the pages and regions that are rendered and which panels
+ * are byte-identical. A different pairing or panel split gives a different key.
+ */
+function figureKey(da: DocModel, db: DocModel, m: ObjectMatch): string {
+  const oa = da.objects[m.a!];
+  const ob = db.objects[m.b!];
+  return JSON.stringify([oa.page, ob.page, m.parts.map((p) => [p.a !== null ? oa.parts[p.a] : null, p.b !== null ? ob.parts[p.b] : null, p.sameHash])]);
 }
