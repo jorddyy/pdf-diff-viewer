@@ -1274,3 +1274,69 @@ code {
   background: var(--bg);
   color: var(--text);
 }
+
+/* Contents tab: section outline with change counts */
+.contents {
+  overflow-y: auto;
+  flex: 1;
+  padding: 4px 0;
+}
+
+.toc-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  padding: 4px 10px;
+  border: 0;
+  border-left: 3px solid transparent;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.toc-row:hover {
+  background: var(--hover, rgba(128, 128, 128, 0.12));
+}
+
+.toc-row.inview {
+  border-left-color: var(--accent, #2563eb);
+  background: var(--hover, rgba(128, 128, 128, 0.12));
+}
+
+.toc-num {
+  color: var(--muted);
+  flex: none;
+}
+
+.toc-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.toc-row.removed .toc-title {
+  text-decoration: line-through;
+}
+
+.toc-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.toc-count {
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: rgba(128, 128, 128, 0.2);
+}
+
+.toc-count.num {
+  background: var(--num);
+}

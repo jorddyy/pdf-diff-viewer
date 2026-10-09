@@ -20,6 +20,7 @@ import { assignRounds } from './comments/assign';
 import { resolveComment, type CommentResolution, type ResolveContext, type VersionData } from './comments/resolve';
 import { annotateMarkdown } from './comments/export';
 import { matchSections, type SectionMatch } from './align/objects';
+import { ContentsPanel } from './ui/ContentsPanel';
 import { CommentsPanel, type History } from './ui/CommentsPanel';
 import type { Mark } from './ui/marks';
 import { clearWorkspaces, deleteWorkspace, getFile, listWorkspaces, putFile, saveWorkspace, workspaceTitle, type Workspace } from './pdf/workspaces';
@@ -55,7 +56,9 @@ function labelFromName(name: string): string {
 function resolveLabel(name: string, docLabel: string): { label: string; titleLabel: string | null } {
   const fromName = versionInName(name);
   if (!fromName) return { label: docLabel, titleLabel: null };
-  return { label: fromName, titleLabel: docLabel !== fromName && /^v\d/.test(docLabel) ? docLabel : null };
+  // v1, v1.0 and v1.0.0 are the same version
+  const norm = (l: string) => l.replace(/(\.0+)+$/, '');
+  return { label: fromName, titleLabel: /^v\d/.test(docLabel) && norm(docLabel) !== norm(fromName) ? docLabel : null };
 }
 
 function versionKey(label: string): number[] {
@@ -87,7 +90,7 @@ export function App() {
   const panesRef = useRef<HTMLElement>(null);
   const [sync, setSync] = useState(true);
   const [dragging, setDragging] = useState(false);
-  const [tab, setTab] = useState<'changes' | 'comments'>('changes');
+  const [tab, setTab] = useState<'changes' | 'contents' | 'comments'>('changes');
   const [theme, setTheme] = useState<'auto' | 'light' | 'dark'>(() => (storageGet('pdfdiff.theme') as 'light' | 'dark' | null) ?? 'auto');
   useEffect(() => {
     if (theme === 'auto') delete document.documentElement.dataset.theme;
@@ -767,6 +770,18 @@ export function App() {
     [al, figs, objMatches, anchors, A?.doc, B?.doc, ctlA, ctlB, resolutions, roundOverride, autoRounds],
   );
 
+  const secMatches = useMemo(() => (al && A?.doc && B?.doc ? sectionsFor({ id: A.id, label: A.label, doc: A.doc }, { id: B.id, label: B.label, doc: B.doc }) : []), [al]);
+  const goToSection = (m: SectionMatch) => {
+    if (!A?.doc || !B?.doc) return;
+    leader.current = { side: null, until: 0, down: false };
+    const sa = m.a !== null ? A.doc.sections[m.a] : null;
+    const sb = m.b !== null ? B.doc.sections[m.b] : null;
+    const pa = sa ? { page: sa.page, y: sa.y } : sb && anchors ? mapPos(anchors, 'b', { page: sb.page, y: sb.y }) : null;
+    const pb = sb ? { page: sb.page, y: sb.y } : sa && anchors ? mapPos(anchors, 'a', { page: sa.page, y: sa.y }) : null;
+    if (pa) ctlA.scrollToDest(pa);
+    if (pb) ctlB.scrollToDest(pb);
+  };
+
   // A click on a highlight shows its entry in the sidebar (centred, flashing),
   // also when it was already selected.
   const [reveal, setReveal] = useState<{ key: string; n: number } | null>(null);
@@ -1085,6 +1100,9 @@ export function App() {
               <button role="tab" aria-selected={tab === 'changes'} class={tab === 'changes' ? 'on' : ''} onClick={() => setTab('changes')}>
                 Changes
               </button>
+              <button role="tab" aria-selected={tab === 'contents'} class={tab === 'contents' ? 'on' : ''} onClick={() => setTab('contents')}>
+                Contents
+              </button>
               <button role="tab" aria-selected={tab === 'comments'} class={tab === 'comments' ? 'on' : ''} onClick={() => setTab('comments')}>
                 Comments{parsed ? ` (${parsed.items.filter((i) => !i.notes).length})` : ''}
               </button>
@@ -1136,6 +1154,16 @@ export function App() {
                   setCommentText('');
                   setRoundOverride(new Map());
                 }}
+              />
+            ) : tab === 'contents' && A?.doc && B?.doc && al ? (
+              <ContentsPanel
+                sectionsA={A.doc.sections}
+                sectionsB={B.doc.sections}
+                matches={secMatches}
+                entries={entries}
+                filters={filters}
+                follow={followRef}
+                onGo={goToSection}
               />
             ) : A && B ? (
               al ? (

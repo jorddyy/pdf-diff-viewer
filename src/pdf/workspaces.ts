@@ -33,7 +33,7 @@ export interface Workspace {
   filters: Record<string, boolean>;
   zoom: number | null;
   sync: boolean;
-  tab: 'changes' | 'comments';
+  tab: 'changes' | 'contents' | 'comments';
   scroll: { a: SavedPos | null; b: SavedPos | null };
   comments: string;
   /** Review round → version hash (only rounds the user changed). */

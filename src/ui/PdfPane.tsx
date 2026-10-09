@@ -48,6 +48,13 @@ export class PaneControl {
     el.scrollTo({ top: Math.max(0, top), left, behavior: smooth ? 'smooth' : 'auto' });
   }
 
+  /** Bring a link target (page coordinates) near the top of the pane, like a PDF viewer. */
+  scrollToDest(pos: Pos): void {
+    const el = this.el;
+    if (!el || this.tops[pos.page] === undefined) return;
+    el.scrollTop = Math.max(0, this.tops[pos.page] + pos.y * this.scaleOf(pos.page) - 40);
+  }
+
   /** Put `pos` at the vertical centre immediately (synchronised scrolling). */
   setCenter(pos: Pos): void {
     const el = this.el;
@@ -148,6 +155,7 @@ export function PdfPane({ pdf, pages, scale, maxWidth, marks, selected, control,
             marks={marks.get(i)}
             selected={selected}
             onMarkClick={onMarkClick}
+            onNavigate={(pos) => control.scrollToDest(pos)}
           />
         ))}
       </div>
@@ -164,14 +172,42 @@ interface PageProps {
   marks?: Mark[];
   selected: string | null;
   onMarkClick: (key: string) => void;
+  onNavigate: (pos: Pos) => void;
 }
 
-function PageView({ pdf, index, width, height, scale, marks, selected, onMarkClick }: PageProps) {
+/** A clickable link of the PDF: box in page coordinates (scale 1, top-left origin). */
+interface PageLink {
+  box: [number, number, number, number];
+  url?: string;
+  /** Resolved lazily: named destinations need a lookup. */
+  dest?: unknown;
+}
+
+/** Page index and y (page coordinates, top-left origin) a PDF destination points at. */
+async function resolveDest(pdf: PDFDocumentProxy, dest: unknown): Promise<Pos | null> {
+  try {
+    const d = typeof dest === 'string' ? await pdf.getDestination(dest) : dest;
+    if (!Array.isArray(d) || !d.length) return null;
+    const page = typeof d[0] === 'number' ? d[0] : await pdf.getPageIndex(d[0]);
+    const kind = d[1]?.name;
+    // XYZ left top zoom / FitH top / FitBH top carry a vertical position; the others mean "the page".
+    const top = kind === 'XYZ' ? d[3] : kind === 'FitH' || kind === 'FitBH' ? d[2] : null;
+    if (typeof top !== 'number') return { page, y: 0 };
+    const vp = (await pdf.getPage(page + 1)).getViewport({ scale: 1 });
+    return { page, y: Math.max(0, vp.convertToViewportPoint(0, top)[1]) };
+  } catch {
+    return null;
+  }
+}
+
+function PageView({ pdf, index, width, height, scale, marks, selected, onMarkClick, onNavigate }: PageProps) {
   const ref = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   const [hover, setHover] = useState<Mark | null>(null);
+  const [links, setLinks] = useState<PageLink[]>([]);
+  const [overLink, setOverLink] = useState<PageLink | null>(null);
 
   useEffect(() => {
     const el = ref.current!;
@@ -199,6 +235,21 @@ function PageView({ pdf, index, width, height, scale, marks, selected, onMarkCli
     (async () => {
       const page = await pdf.getPage(index + 1);
       if (cancelled) return;
+      page
+        .getAnnotations({ intent: 'display' })
+        .then((anns) => {
+          if (cancelled) return;
+          const vp = page.getViewport({ scale: 1 });
+          const out: PageLink[] = [];
+          for (const a of anns) {
+            if (a.subtype !== 'Link' || !a.rect || !(a.url || a.dest)) continue;
+            const [x0, y0] = vp.convertToViewportPoint(a.rect[0], a.rect[1]);
+            const [x1, y1] = vp.convertToViewportPoint(a.rect[2], a.rect[3]);
+            out.push({ box: [Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)], url: a.url ?? undefined, dest: a.dest });
+          }
+          setLinks(out);
+        })
+        .catch(() => {});
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const viewport = page.getViewport({ scale: scale * dpr });
       const off = document.createElement('canvas');
@@ -233,6 +284,28 @@ function PageView({ pdf, index, width, height, scale, marks, selected, onMarkCli
     };
   }, [visible, scale, pdf, index]);
 
+  const pointOf = (e: MouseEvent): [number, number] => {
+    const r = ref.current!.getBoundingClientRect();
+    return [(e.clientX - r.left) / scale, (e.clientY - r.top) / scale];
+  };
+
+  /** The smallest link under a point. */
+  const linkAt = (e: MouseEvent): PageLink | null => {
+    if (!links.length) return null;
+    const [x, y] = pointOf(e);
+    let best: PageLink | null = null;
+    let bestArea = Infinity;
+    for (const l of links) {
+      if (x < l.box[0] || x > l.box[2] || y < l.box[1] || y > l.box[3]) continue;
+      const area = (l.box[2] - l.box[0]) * (l.box[3] - l.box[1]);
+      if (area < bestArea) {
+        bestArea = area;
+        best = l;
+      }
+    }
+    return best;
+  };
+
   /** The smallest mark under a point (page coordinates). */
   const markAt = (e: MouseEvent): Mark | null => {
     if (!marks?.length) return null;
@@ -255,18 +328,34 @@ function PageView({ pdf, index, width, height, scale, marks, selected, onMarkCli
 
   return (
     <div
-      class={`page${hover ? ' over-mark' : ''}`}
+      class={`page${hover || overLink ? ' over-mark' : ''}`}
       ref={ref}
-      title={hover?.title}
+      title={overLink ? (overLink.url ?? 'Go to the link target') + (hover ? '  (Alt-click: show the change entry)' : '') : hover?.title}
       style={{ width: `${width * scale}px`, height: `${height * scale}px` }}
       onMouseMove={(e) => {
         const m = markAt(e);
         if (m !== hover) setHover(m);
+        const l = linkAt(e);
+        if (l !== overLink) setOverLink(l);
       }}
-      onMouseLeave={() => setHover(null)}
+      onMouseLeave={() => {
+        setHover(null);
+        setOverLink(null);
+      }}
       onClick={(e) => {
         // A click that ends a text selection is not a navigation.
         if (window.getSelection()?.toString().trim()) return;
+        // A link of the document wins over a highlight on the same words (a highlight
+        // usually covers more than the link text); Alt-click picks the highlight.
+        const l = e.altKey ? null : linkAt(e);
+        if (l) {
+          if (l.url) window.open(l.url, '_blank', 'noopener,noreferrer');
+          else
+            resolveDest(pdf, l.dest).then((pos) => {
+              if (pos) onNavigate(pos);
+            });
+          return;
+        }
         const m = markAt(e);
         if (m) onMarkClick(m.key);
       }}
