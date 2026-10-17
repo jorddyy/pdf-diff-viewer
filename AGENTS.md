@@ -49,7 +49,7 @@ Browser tests (puppeteer-core, no bundled browser):
 ```bash
 npm run e2e -- <url> <out-dir> old.pdf new.pdf            # screenshots + timings
 npm run e2e:comments -- <url> <out-dir> review.md a.pdf b.pdf [...]
-npx tsx scripts/e2e-viewer.ts <url> <out-dir> old.pdf new.pdf       # theme, sync scroll, list follows, landscape, selection, click-to-reveal, go to page, panels (PASS/FAIL)
+npx tsx scripts/e2e-viewer.ts <url> <out-dir> old.pdf new.pdf       # theme, sync scroll, list follows, landscape, selection, click-to-reveal, go to page, panels of new and changed figures (PASS/FAIL)
 npx tsx scripts/e2e-session.ts <url> <out-dir> review.md a.pdf b.pdf # comments done/delete/undo, reload restore, recent list (PASS/FAIL)
 npx tsx scripts/e2e-export.ts <url> <out-dir> old.pdf new.pdf       # writes export-side.pdf / export-annotated.pdf
 # env: BROWSER=firefox, DARK=1 (Chromium), FIGURE="Figure 32", PICK="L477", WAIT=6000, HISTORY=1

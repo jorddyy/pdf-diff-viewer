@@ -7,6 +7,12 @@ The running version is shown next to the title in the app (hover for the commit)
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-17
+
+### Fixed
+- Compare dialog of a figure that is new (or removed): only its first panel was
+  shown; all its panels are shown now.
+
 ## [0.4.0] - 2026-10-17
 
 ### Changed

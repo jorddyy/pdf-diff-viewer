@@ -790,7 +790,11 @@ export function App() {
       const oa = m.a !== null ? A.doc.objects[m.a] : null;
       const ob = m.b !== null ? B.doc.objects[m.b] : null;
       const letters = 'abcdefghijklmnopqrstuvwxyz';
-      const parts = m.parts.length ? m.parts : [{ a: oa ? 0 : null, b: ob ? 0 : null, sameHash: false }];
+      // A figure in one version only has no panel pairs: show all its panels.
+      const one = oa ?? ob;
+      const parts = m.parts.length
+        ? m.parts
+        : Array.from({ length: Math.max(1, one?.parts.length ?? 0) }, (_, i) => ({ a: oa ? i : null, b: ob ? i : null, sameHash: false }));
       setCompare({
         title: (oa && ob && oa.number !== ob.number ? `Figure ${oa.number} → ${ob.number}` : `Figure ${(ob ?? oa)?.number ?? ''}`).trim(),
         aLabel: A.label,

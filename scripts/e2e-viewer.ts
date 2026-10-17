@@ -150,7 +150,14 @@ for (const attempt of [1, 2]) {
     break;
   }
   await page.mouse.click(mb.x + mb.width / 2, mb.y + mb.height / 2);
-  await sleep(1200);
+  // The list scrolls smoothly; over a long list that takes more than a second.
+  await sleep(300);
+  for (let i = 0, last = -1; i < 30; i++) {
+    const top = await page.$eval('.change-list', (l) => l.scrollTop);
+    if (top === last) break;
+    last = top;
+    await sleep(200);
+  }
   const pos = await page.evaluate(() => {
     const list = document.querySelector('.change-list')!.getBoundingClientRect();
     const sel = document.querySelector('.chg.sel')?.getBoundingClientRect();
@@ -179,16 +186,21 @@ const focused = await page.evaluate(() => document.activeElement?.closest('.page
 check('the g key focuses the page box', focused);
 await page.keyboard.press('Escape');
 
-// A figure that exists in one version only: no blink/difference/swipe.
-const addedOpened = await page.evaluate(() => {
-  const entry = [...document.querySelectorAll('.chg.fig')].find((e) => e.textContent?.includes('Figure added'));
-  (entry?.querySelector('.link') as HTMLElement | null)?.click();
-  return !!entry;
+// A figure that exists in one version only: no blink/difference/swipe, and every panel shown.
+const addedEntry = await page.evaluate(() => {
+  const entry = [...document.querySelectorAll<HTMLElement>('.chg.fig')].find((e) => e.textContent?.includes('Figure added'));
+  entry?.click();
+  return entry?.dataset.key ?? null;
 });
-if (addedOpened) {
+if (addedEntry) {
+  await sleep(1500);
+  const panels = await page.evaluate(() => document.querySelectorAll('.pane')[1].querySelectorAll('.mk.sel').length);
+  await page.evaluate((key) => (document.querySelector(`[data-key="${key}"] .link`) as HTMLElement | null)?.click(), addedEntry);
   await page.waitForSelector('.pair-view', { timeout: 30_000 });
-  await sleep(800);
+  await page.waitForFunction(() => !document.querySelector('.pair-view.loading'), { timeout: 60_000 }).catch(() => {});
   check('no comparison modes for a figure in one version only', (await page.$$('.modal .modes')).length === 0);
+  const views = (await page.$$('.modal .pair-view img')).length;
+  check('a new figure shows all its panels in the compare dialog', panels > 0 && views === panels, `${views} images for ${panels} panels`);
   await page.keyboard.press('Escape');
   await sleep(300);
 }
