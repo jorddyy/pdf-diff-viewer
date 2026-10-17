@@ -24,12 +24,16 @@ export function rasterOf(canvas: HTMLCanvasElement): Raster {
   return { data: ctx.getImageData(0, 0, canvas.width, canvas.height).data, width: canvas.width, height: canvas.height };
 }
 
-function luminance(r: Raster): Float32Array {
+const LUMA = [0.299, 0.587, 0.114];
+
+/** One colour channel (0–2), or the luminance by default, on white paper. */
+function channel(r: Raster, c = -1): Float32Array {
   const out = new Float32Array(r.width * r.height);
   for (let i = 0, p = 0; i < out.length; i++, p += 4) {
     const a = r.data[p + 3] / 255;
     // Transparent pixels count as white paper.
-    out[i] = 255 * (1 - a) + a * (0.299 * r.data[p] + 0.587 * r.data[p + 1] + 0.114 * r.data[p + 2]);
+    const v = c < 0 ? LUMA[0] * r.data[p] + LUMA[1] * r.data[p + 1] + LUMA[2] * r.data[p + 2] : r.data[p + c];
+    out[i] = 255 * (1 - a) + a * v;
   }
   return out;
 }
@@ -101,7 +105,9 @@ export function bestShift(la: Float32Array, wa: number, ha: number, lb: Float32A
 }
 
 function searchShift(la: Float32Array, wa: number, ha: number, lb: Float32Array, wb: number, hb: number, maxFrac: number, coarseOnly = false): [number, number, number] {
-  const f = Math.max(1, Math.floor(Math.max(wa, wb) / 160));
+  // Coarse grid of at most ~120 px: at 160 a 240 px panel was searched at full
+  // resolution, ~1 s of main-thread time per panel for the same verdicts.
+  const f = Math.max(1, Math.floor(Math.max(wa, wb) / 120));
   const [sa, swa, sha] = downsample(la, wa, ha, f);
   const [sb, swb, shb] = downsample(lb, wb, hb, f);
   const r = Math.max(2, Math.ceil((maxFrac * Math.max(wa, ha)) / f));
@@ -165,8 +171,9 @@ const SCALES = [0.9, 0.93, 0.96, 1.04, 1.07, 1.1];
  * scale (a cropped or resized plot). A scale is only used when it clearly beats
  * the plain shift, so identical figures are never "improved" into a match.
  */
-export function register(la: Float32Array, wa: number, ha: number, lb: Float32Array, wb: number, hb: number): { l: Float32Array; scaled: boolean } {
+export function register(la: Float32Array, wa: number, ha: number, lb: Float32Array, wb: number, hb: number): { l: Float32Array; scaled: boolean; warp: (l: Float32Array) => Float32Array } {
   let src = lb;
+  let scale = 1;
   const [, , base] = searchShift(la, wa, ha, lb, wb, hb, 0.04, true);
   if (base > 2) {
     let bestCost = base * 0.8; // needs a clear gain
@@ -177,6 +184,7 @@ export function register(la: Float32Array, wa: number, ha: number, lb: Float32Ar
       if (c < bestCost) {
         bestCost = c;
         bestS = s;
+        scale = s;
         src = ls;
       }
     };
@@ -185,15 +193,20 @@ export function register(la: Float32Array, wa: number, ha: number, lb: Float32Ar
     if (bestS !== 1) for (const step of [0.015, 0.007, 0.003]) for (const s of [bestS - step, bestS + step]) tryScale(s);
   }
   const [sx, sy] = bestShift(la, wa, ha, src, wb, hb);
-  const out = new Float32Array(wa * ha);
-  for (let y = 0; y < ha; y++) {
-    for (let x = 0; x < wa; x++) {
-      const xb = x + sx;
-      const yb = y + sy;
-      out[y * wa + x] = xb < 0 || yb < 0 || xb >= wb || yb >= hb ? 255 : src[yb * wb + xb];
+  const shift = (l: Float32Array) => {
+    const out = new Float32Array(wa * ha);
+    for (let y = 0; y < ha; y++) {
+      for (let x = 0; x < wa; x++) {
+        const xb = x + sx;
+        const yb = y + sy;
+        out[y * wa + x] = xb < 0 || yb < 0 || xb >= wb || yb >= hb ? 255 : l[yb * wb + xb];
+      }
     }
-  }
-  return { l: out, scaled: src !== lb };
+    return out;
+  };
+  // The same transform for any other image of b (its colour channels).
+  const warp = (l: Float32Array) => shift(scale === 1 ? l : scaleAbout(l, wb, hb, scale));
+  return { l: shift(src), scaled: src !== lb, warp };
 }
 
 /**
@@ -202,27 +215,39 @@ export function register(la: Float32Array, wa: number, ha: number, lb: Float32Ar
  * Rasters whose heights differ by more than 3% count as completely changed.
  */
 export function inkDiff(a: Raster, b: Raster): number {
-  if (a.width !== b.width || Math.abs(a.height - b.height) > 0.03 * Math.max(a.height, b.height) + 1) return 1;
+  return panelDiff(a, b).diff;
+}
+
+/**
+ * `inkDiff` with whether any pixel differs at all. Pixels are compared in
+ * colour: a contour that moved between two translucent fills, or a red curve
+ * that turned green, keeps nearly the same brightness.
+ */
+export function panelDiff(a: Raster, b: Raster): { diff: number; differs: boolean } {
+  if (a.width !== b.width || Math.abs(a.height - b.height) > 0.03 * Math.max(a.height, b.height) + 1) return { diff: 1, differs: true };
   const w = a.width;
-  const la = blur(luminance(a), w, a.height);
-  const reg = register(la, w, a.height, blur(luminance(b), w, b.height), w, b.height);
-  const lb = reg.l;
+  const h = a.height;
+  const reg = register(blur(channel(a), w, h), w, h, blur(channel(b), w, b.height), w, b.height);
+  const ca = [0, 1, 2].map((c) => blur(channel(a, c), w, h));
+  const cb = [0, 1, 2].map((c) => reg.warp(blur(channel(b, c), w, b.height)));
   // A resampled plot has softer edges: allow two pixels instead of one.
   const tol = reg.scaled ? 2 : 1;
+  const dist = (i: number, j: number) => Math.max(Math.abs(ca[0][i] - cb[0][j]), Math.abs(ca[1][i] - cb[1][j]), Math.abs(ca[2][i] - cb[2][j]));
+  const paper = (l: Float32Array[], i: number) => l[0][i] > 225 && l[1][i] > 225 && l[2][i] > 225;
   let ink = 0;
   let diff = 0;
-  const h = a.height;
-  const at = (l: Float32Array, x: number, y: number) => (x < 0 || y < 0 || x >= w || y >= h ? 255 : l[y * w + x]);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const va = la[y * w + x];
-      const vb = lb[y * w + x];
-      if (va > 225 && vb > 225) continue;
+      const i = y * w + x;
+      if (paper(ca, i) && paper(cb, i)) continue;
       ink++;
-      let best = Math.abs(va - vb);
+      let best = dist(i, i);
       for (let dy = -tol; dy <= tol && best > 40; dy++) {
+        if (y + dy < 0 || y + dy >= h) continue;
         for (let dx = -tol; dx <= tol && best > 40; dx++) {
-          best = Math.min(best, Math.abs(va - at(lb, x + dx, y + dy)), Math.abs(at(la, x + dx, y + dy) - vb));
+          if (x + dx < 0 || x + dx >= w) continue;
+          const j = i + dy * w + dx;
+          best = Math.min(best, dist(i, j), dist(j, i));
         }
       }
       if (best > 40) diff++;
@@ -230,23 +255,52 @@ export function inkDiff(a: Raster, b: Raster): number {
   }
   const ratio = diff / Math.max(ink, 50);
   // Resampling a plot leaves a noise floor of a percent or two that is not a change.
-  return reg.scaled ? Math.max(0, ratio - SCALED_NOISE) : ratio;
+  return { diff: reg.scaled ? Math.max(0, ratio - SCALED_NOISE) : ratio, differs: diff > 0 };
 }
 
 const SCALED_NOISE = 0.02;
 
 /** Bump when rendering, registration or the ink comparison changes, so cached figure results are ignored. */
-export const COMPARE_VERSION = 1;
+export const COMPARE_VERSION = 2;
 
 /** Threshold above which a figure panel is reported as changed. */
 export const CHANGED_THRESHOLD = 0.01;
+
+/** Panel width of the comparison, and of the second look at close calls. */
+const WIDTH = 240;
+const FINE_WIDTH = 480;
+/**
+ * At 240 px a moved data point, a rescaled colour bar or an edited legend
+ * changes a few pixels, below the threshold, as do re-rendered plots that
+ * look the same. At 480 px they separate: identical re-renders stayed below
+ * 0.12% in the sample notes, such edits measured 0.24% and more.
+ */
+const FINE_THRESHOLD = 0.002;
+
+/**
+ * Scores (`CHANGED_THRESHOLD` scale) of figure panels `ra[k]` → `rb[k]`.
+ * Panels that differ a little get a second look at twice the width; most
+ * panels are byte-identical, identical after rendering or clearly changed.
+ */
+export async function comparePanels(pa: PDFDocumentProxy, pageA: number, ra: Rect[], pb: PDFDocumentProxy, pageB: number, rb: Rect[]): Promise<number[]> {
+  const [xa, xb] = await Promise.all([renderRegions(pa, pageA, ra, WIDTH), renderRegions(pb, pageB, rb, WIDTH)]);
+  const first = xa.map((x, k) => panelDiff(x, xb[k]));
+  const close = first.flatMap((d, k) => (d.differs && d.diff <= CHANGED_THRESHOLD ? [k] : []));
+  const scores = first.map((d) => d.diff);
+  if (close.length) {
+    const fa = await renderRegions(pa, pageA, close.map((k) => ra[k]), FINE_WIDTH);
+    const fb = await renderRegions(pb, pageB, close.map((k) => rb[k]), FINE_WIDTH);
+    close.forEach((k, i) => (scores[k] = (panelDiff(fa[i], fb[i]).diff * CHANGED_THRESHOLD) / FINE_THRESHOLD));
+  }
+  return scores;
+}
 
 /** Difference image (after registration): ink only in the old version red, only in the new one green, shared ink grey. */
 export function diffImage(a: Raster, b: Raster): ImageData {
   const w = a.width;
   const h = a.height;
-  const la = luminance(a);
-  const lb = register(la, a.width, a.height, luminance(b), b.width, b.height).l;
+  const la = channel(a);
+  const lb = register(la, a.width, a.height, channel(b), b.width, b.height).l;
   const out = new ImageData(w, h);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {

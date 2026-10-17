@@ -1,6 +1,6 @@
 import type { DocModel, DocObject, Line, Rect, Section } from './types';
 import { unionAll, union, overlapX } from './geometry';
-import { digitSkeleton, normalizeToken } from './normalize';
+import { NOTE_MARK, digitSkeleton, normalizeToken } from './normalize';
 
 export interface OutlineEntry {
   title: string;
@@ -37,6 +37,25 @@ export function markHeadersFooters(doc: DocModel): void {
       const pageNumber = nearBottom && /^([ivxlc]+|\d+)$/i.test(l.text.trim());
       if (repeated || pageNumber) l.kind = nearTop ? 'header' : 'footer';
     }
+  }
+}
+
+/**
+ * Footnotes: the run of small unnumbered lines at the bottom of a page, from
+ * the first line that opens with a footnote mark. They are compared as a
+ * stream of their own, because where they land depends on page breaks.
+ */
+export function markFootnotes(doc: DocModel): void {
+  for (const lines of groupByPage(doc)) {
+    const run: Line[] = [];
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const l = lines[i];
+      if (l.kind === 'footer') continue;
+      if (l.kind !== 'body' || l.num !== null || l.size > 0.92 * doc.bodySize) break;
+      run.unshift(l);
+    }
+    const first = run.findIndex((l) => doc.words[l.words[0]]?.norm === NOTE_MARK);
+    if (first >= 0) for (const l of run.slice(first)) l.kind = 'footnote';
   }
 }
 
@@ -200,7 +219,16 @@ export function markObjects(doc: DocModel): void {
         let last = ys[0];
         if (Math.abs(last - (down ? capBottom : capTop)) > 120) return null;
         for (const y of ys.slice(1)) {
-          if (Math.abs(y - last) > 250) break;
+          // A long table without inner rules: rules far apart still belong
+          // together when every line between them has table columns or is a
+          // stray row of scripts (no running text, other float or graphic). The same test with and
+          // without line numbers keeps drafts and final versions comparable.
+          const lo = Math.min(y, last);
+          const hi = Math.max(y, last);
+          const across = (b: Rect) => b[1] < hi && b[3] > lo;
+          const between = lines.filter((l) => l.base > lo && l.base < hi);
+          const apart = !between.length || !between.every((l) => hasColumns(doc, l) || l.size < 0.85 * doc.bodySize) || otherCaps.some(across) || pageInfo.graphics.some(across);
+          if (Math.abs(y - last) > 250 && apart) break;
           last = y;
         }
         return last;
@@ -288,6 +316,12 @@ function mergeNearby(rects: Rect[]): Rect[] {
     else out.push([...r] as Rect);
   }
   return out;
+}
+
+/** A table row: somewhere a gap of more than two ems between words. */
+function hasColumns(doc: DocModel, l: Line): boolean {
+  for (let k = 1; k < l.words.length; k++) if (doc.words[l.words[k]].box[0] - doc.words[l.words[k - 1]].box[2] > 2 * l.size) return true;
+  return false;
 }
 
 export function groupByPage(doc: DocModel): Line[][] {

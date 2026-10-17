@@ -7,10 +7,12 @@ notes:
 - **Line numbers move.** Text is compared word by word after removing the
   line-number column, page numbers and headers, so reflowed paragraphs and
   shifted numbering do not show up as changes. Versions without line numbers
-  work too.
+  work too. Footnotes are compared among themselves, so one that lands on
+  another page is not a change, and tables set sideways on a page are read too.
 - **Figures change.** Each `\includegraphics` is located in the PDF and
   fingerprinted; unchanged figures are recognised instantly, the others are
-  rendered and compared visually (side by side, blink, difference, swipe).
+  rendered and compared visually (side by side, blink, difference, swipe);
+  panels that were only rearranged or resized count as changed too.
   Renumbered figures are matched through their captions; if a pairing is wrong,
   "Wrong pair?" on the entry lets you choose the right one.
 - **Review comments cite old line numbers.** Paste your Markdown review and
@@ -43,7 +45,8 @@ Open the page, drop two or more PDFs on it.
 
 - The change list (left) groups changes by section. Filters: text, numbers
   (only numbers changed, e.g. results), moved text, figures, renumbering
-  (hidden by default) and the table of contents (hidden by default).
+  (figure, table, equation, section and citation numbers; hidden by default)
+  and the table of contents (hidden by default).
 - Click a change in the list to jump to it in both versions, or click a
   highlight on a page to find its entry in the list. `j`/`n` and `k`/`p` step
   through the changes. Scrolling is synchronised between the two versions,

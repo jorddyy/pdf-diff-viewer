@@ -7,12 +7,37 @@ The running version is shown next to the title in the app (hover for the commit)
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-17
+
 ### Changed
 - Figure comparison results are remembered in the browser: reopening a comparison
   (or reloading the page) shows figure changes at once instead of rendering every
   figure again. "Clear stored data" removes them as well.
 
 ### Fixed
+- Figures whose plots changed only a little (contours shifted with a new
+  result, a moved data point, a rescaled colour bar, an edited legend) were
+  reported as unchanged. Panels are now compared in colour, and close calls get
+  a second look at twice the resolution.
+- A figure whose panels were rearranged or resized (for example a 2 × 2 grid made
+  one column) is reported as changed, even when the graphics are byte-identical.
+- Figure comparison takes far less main-thread time, so the page stays
+  responsive while figures are compared.
+- Pages with a table set sideways (`sidewaystable`) were skipped entirely; their
+  text is now compared and highlighted in place.
+- Citation lists such as `[13–15]` or `[8, 21, 33]` that only shifted are
+  reported as renumbering, not as number changes.
+- Footnotes no longer cause false "moved" entries or insert/delete pairs when a
+  page break moves them, and renumbered footnotes are not changes.
+- Hidden labels of cropped plots no longer stick to caption words
+  ("spectrum1") or garble a caption's number.
+- Long tables without inner rules are recognised as tables, so their rows are
+  not mistaken for running text.
+- Asymmetric uncertainties read `+0.31−0.27` in the change list instead of
+  `+0−0..3127`; footnote and affiliation marks are no longer glued to words.
+- `≠` typeset two ways, or a space shifted next to a math accent, is no longer a change.
+- Moved paragraphs are marked completely instead of from the first word that
+  the plain diff happened to pair elsewhere.
 - Compare dialog: in Firefox, figures with several large panels ran off the bottom of
   the window and could not be scrolled. The dialog now fits the window and scrolls
   (also with Page Down and the arrow keys).

@@ -4,7 +4,7 @@
 import type { DocModel } from '../extract/types';
 
 /** Bump when extraction output changes so stale entries are ignored. */
-export const EXTRACT_VERSION = 2;
+export const EXTRACT_VERSION = 3;
 const DB = 'pdf-diff-cache';
 const STORE = 'docs';
 const MAX_ENTRIES = 30;

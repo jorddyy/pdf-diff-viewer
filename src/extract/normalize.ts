@@ -10,6 +10,9 @@ const REPLACEMENTS: [RegExp, string][] = [
   [/…/g, '...'],
 ];
 
+/** Comparison form of a footnote mark: renumbered footnotes are not changes. */
+export const NOTE_MARK = '#fn';
+
 export function normalizeToken(s: string): string {
   let t = s.normalize('NFKC');
   for (const [re, rep] of REPLACEMENTS) t = t.replace(re, rep);

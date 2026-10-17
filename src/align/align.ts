@@ -71,6 +71,8 @@ const INT_TOKEN = /^[[(]?(?:[A-Z]\.)?\d+[a-z]?[\])]?[,.;:]?$/;
 const CITATION = /^(\[\d+[\],;]?[,.;:]?|\d+\][,.;:]?)$/;
 /** Equation numbers: "(13)", "(A.3)". */
 const EQ_NUMBER = /^\((?:[A-Z]\.)?\d+[a-z]?\)[,.;:]?$/;
+/** One token of a citation list: "[13-15].", "21,", "34]", "[4,61,62],", "34-" (a range broken across lines). */
+const CITE_TOKEN = /^\[?\d+(?:-\d*)?(?:,\d+(?:-\d*)?)*[\],]?[,.;:]?$/;
 
 export type PairClass = 'same' | 'renumber' | 'numeric' | 'text';
 
@@ -80,11 +82,12 @@ export type PairClass = 'same' | 'renumber' | 'numeric' | 'text';
  * renumbering ("Fig. 12", "[23]", "(13)", a heading's number); every other
  * change of digits, such as "(1.23 ± 0.04)" → "(1.31 ± 0.05)", is a number change.
  */
-export function classifyPair(x: string, y: string, prev: string[], headingFirst: boolean): PairClass {
+export function classifyPair(x: string, y: string, prev: string[], headingFirst: boolean, citation = false): PairClass {
   if (x === y) return 'same';
   if (!/\d/.test(x) || !/\d/.test(y) || digitSkeleton(x) !== digitSkeleton(y)) return 'text';
   const [p1 = '', p2 = '', p3 = ''] = prev;
   if ((headingFirst || REF_WORD.test(p1)) && SECTION_NUM.test(x) && SECTION_NUM.test(y)) return 'renumber';
+  if (citation && CITE_TOKEN.test(x) && CITE_TOKEN.test(y)) return 'renumber';
   if (!INT_TOKEN.test(x) || !INT_TOKEN.test(y)) return 'numeric';
   if (CITATION.test(x) && CITATION.test(y)) return 'renumber';
   if (EQ_NUMBER.test(x) && EQ_NUMBER.test(y)) return 'renumber';
@@ -107,6 +110,18 @@ function isFloatLine(doc: DocModel, lineId: number): boolean {
   return !!o && o.kind !== 'equation';
 }
 
+/** Math accents set as glyphs of their own (also after NFKC, which makes them combining marks). */
+const ACCENT = /[\u0300-\u036f\u00a8\u00af\u00b4\u02c6-\u02dd]/u;
+
+/** Tokens joined without spaces, with a combining overlay put after its base so NFC composes "̸=" into "≠". */
+function squash(tokens: Token[], idx: number[]): string {
+  return idx
+    .map((t) => tokens[t].norm)
+    .join('')
+    .replace(/̸(.)/gu, '$1̸')
+    .normalize('NFC');
+}
+
 interface Segment2 {
   a: number[];
   b: number[];
@@ -124,19 +139,21 @@ export function alignDocs(A: DocModel, B: DocModel): Alignment {
   const aState = new Uint8Array(tokensA.length).fill(TokState.Changed);
   const bState = new Uint8Array(tokensB.length).fill(TokState.Changed);
 
-  // Split into the running text and one stream per float.
+  // Split into the running text, the footnotes and one stream per float.
   const split = (doc: DocModel, tokens: Token[]) => {
     const body: number[] = [];
+    const notes: number[] = [];
     const floats = new Map<number, number[]>();
     tokens.forEach((t, i) => {
-      if (!isFloatLine(doc, t.line)) body.push(i);
+      if (doc.lines[t.line].kind === 'footnote') notes.push(i);
+      else if (!isFloatLine(doc, t.line)) body.push(i);
       else {
         const o = doc.lines[t.line].object;
         if (!floats.has(o)) floats.set(o, []);
         floats.get(o)!.push(i);
       }
     });
-    return { body, floats };
+    return { body, notes, floats };
   };
   const sA = split(A, tokensA);
   const sB = split(B, tokensB);
@@ -156,10 +173,41 @@ export function alignDocs(A: DocModel, B: DocModel): Alignment {
         bState[tb] = TokState.Equal;
       }
     }
+    // A stretch that differs only in how a glyph was composed ("̸ =" vs
+    // "≠"), or in where pdf.js put a space next to a math accent ("A ˜K" vs
+    // "A˜ K"), is not a change. Other spacing edits ("Run2" → "Run 2") are.
+    for (let i = 0; i < ops.length; i++) {
+      if (ops[i].type === 'equal') continue;
+      let j = i;
+      while (j + 1 < ops.length && ops[j + 1].type !== 'equal') j++;
+      const ta = ops.slice(i, j + 1).flatMap((op) => a.slice(op.a0, op.a1));
+      const tb = ops.slice(i, j + 1).flatMap((op) => b.slice(op.b0, op.b1));
+      const same = ta.length && tb.length && squash(tokensA, ta) === squash(tokensB, tb);
+      const composed = same && ta.map((t) => tokensA[t].norm).join('') !== tb.map((t) => tokensB[t].norm).join('');
+      // The stretch with one neighbour on each side.
+      const accent = (tokens: Token[], seq: number[], from: number, to: number) =>
+        seq.slice(Math.max(0, from - 1), to + 1).some((t) => ACCENT.test(tokens[t].norm));
+      if (same && (composed || accent(tokensA, a, ops[i].a0, ops[j].a1) || accent(tokensB, b, ops[i].b0, ops[j].b1))) {
+        ta.forEach((t, k) => {
+          aToB[t] = tb[Math.min(k, tb.length - 1)];
+          aState[t] = TokState.Equal;
+        });
+        tb.forEach((t, k) => {
+          bToA[t] = ta[Math.min(k, ta.length - 1)];
+          bState[t] = TokState.Equal;
+        });
+      }
+      i = j;
+    }
     return { a, b, sa, sb, ops };
   };
 
   const body = run(sA.body, sB.body);
+  // Position of each running-text token in its stream.
+  const posA = new Int32Array(tokensA.length).fill(-1);
+  const posB = new Int32Array(tokensB.length).fill(-1);
+  sA.body.forEach((t, k) => (posA[t] = k));
+  sB.body.forEach((t, k) => (posB[t] = k));
   const moves = mergeMoves(detectMoves(body, tokensA, aToB, bToA, aState, bState));
   // Inside a moved block, leftover pieces that also occur in its new place belong to the move.
   const runLen = (map: Int32Array, t: number) => {
@@ -214,8 +262,41 @@ export function alignDocs(A: DocModel, B: DocModel): Alignment {
     }
     mv.a.sort((x, y) => x - y);
     mv.b.sort((x, y) => x - y);
+    // Grow the block over identical words at its edges that the plain diff
+    // left unpaired or paired by coincidence ("could in principle be" before
+    // a moved "used to determine …").
+    for (const dir of [-1, 1]) {
+      let ka = posA[dir < 0 ? mv.a[0] : mv.a[mv.a.length - 1]] + dir;
+      let kb = posB[dir < 0 ? mv.b[0] : mv.b[mv.b.length - 1]] + dir;
+      for (; ka >= 0 && ka < sA.body.length && kb >= 0 && kb < sB.body.length; ka += dir, kb += dir) {
+        const ta = sA.body[ka];
+        const tb = sB.body[kb];
+        const loose = (state: Uint8Array, map: Int32Array, t: number) =>
+          state[t] === TokState.Changed || (state[t] === TokState.Equal && runLen(map, t) <= 2);
+        if (tokensA[ta].norm !== tokensB[tb].norm || !loose(aState, aToB, ta) || !loose(bState, bToA, tb)) break;
+        if (aState[ta] === TokState.Equal) {
+          bToA[aToB[ta]] = -1;
+          bState[aToB[ta]] = TokState.Changed;
+        }
+        if (bState[tb] === TokState.Equal) {
+          aToB[bToA[tb]] = -1;
+          aState[bToA[tb]] = TokState.Changed;
+        }
+        aToB[ta] = tb;
+        bToA[tb] = ta;
+        aState[ta] = TokState.Moved;
+        bState[tb] = TokState.Moved;
+        if (dir < 0) {
+          mv.a.unshift(ta);
+          mv.b.unshift(tb);
+        } else {
+          mv.a.push(ta);
+          mv.b.push(tb);
+        }
+      }
+    }
   }
-  const segs: Segment2[] = [body];
+  const segs: Segment2[] = [body, run(sA.notes, sB.notes)];
   const pairedA = new Set<number>();
   const pairedB = new Set<number>();
   for (const [x, y] of pairFloats(A, B, tokensA, tokensB, sA.floats, sB.floats)) {
@@ -467,7 +548,9 @@ function buildChange(ctx: Ctx, id: number, ga: number[], gb: number[], atA: numb
         : `Eq. (${obj.number})`
     : firstLine?.kind === 'heading'
       ? 'Heading'
-      : '';
+      : firstLine?.kind === 'footnote'
+        ? 'Footnote'
+        : '';
   // Maths token order is noisy: edits inside a display equation get their own class.
   // Pure number changes stay "numeric" (results are often written as equations).
   const inEquation = [firstLine, gb.length ? B.lines[tokensB[gb[0]].line] : null].some((l) => l && l.object >= 0 && (l === firstLine ? doc : B).objects[l.object].kind === 'equation');
@@ -531,6 +614,32 @@ function segments(doc: DocModel, tokens: Token[], state: Uint8Array, group: numb
   return segs;
 }
 
+/**
+ * Whether token t sits in a bracketed citation list: "[13-15]", "[8, 21,
+ * 33, 34]". Two plain numbers are an interval in a table, or after "=" or
+ * "∈", or before a unit ("θ ∈ [41, 56]◦"), not citations.
+ */
+export function inCitation(doc: DocModel, tokens: Token[], t: number): boolean {
+  const kind = doc.lines[tokens[t].line].kind;
+  if (kind === 'equation') return false;
+  let start = t;
+  while (start > 0 && start > t - 30 && !tokens[start].norm.startsWith('[')) {
+    const prev = tokens[start - 1].norm;
+    if (!CITE_TOKEN.test(prev) || prev.includes(']')) return false;
+    start--;
+  }
+  if (!tokens[start].norm.startsWith('[')) return false;
+  let end = start;
+  while (end < tokens.length && end < start + 30 && CITE_TOKEN.test(tokens[end].norm) && !tokens[end].norm.includes(']')) end++;
+  if (end >= tokens.length || end < t || !CITE_TOKEN.test(tokens[end].norm) || !tokens[end].norm.includes(']')) return false;
+  const items = tokens.slice(start, end + 1).flatMap((x) => x.norm.replace(/[^\d,-]/g, '').split(',').filter(Boolean));
+  if (items.length !== 2 || items.some((i) => i.includes('-'))) return true;
+  if (kind === 'table') return false;
+  const before = tokens[start - 1]?.norm ?? '';
+  const after = tokens[end + 1]?.norm ?? '';
+  return !/^[=∈≈<>≤≥]$/.test(before) && !/^(◦|°|%|mrad|rad|deg)/.test(after);
+}
+
 function classify(ctx: Ctx, ga: number[], gb: number[]): ChangeClass {
   const { A, B, tokensA, tokensB } = ctx;
   const lineKinds = [...ga.map((t) => A.lines[tokensA[t].line].kind), ...gb.map((t) => B.lines[tokensB[t].line].kind)];
@@ -542,7 +651,7 @@ function classify(ctx: Ctx, ga: number[], gb: number[]): ChangeClass {
     const prev = [1, 2, 3].map((d) => (t - d >= 0 ? tokensA[t - d].norm : ''));
     const line = A.lines[tokensA[t].line];
     const headingFirst = line.kind === 'heading' && line.words[0] === tokensA[t].words[0];
-    const c = classifyPair(tokensA[t].norm, tokensB[gb[k]].norm, prev, headingFirst);
+    const c = classifyPair(tokensA[t].norm, tokensB[gb[k]].norm, prev, headingFirst, inCitation(A, tokensA, t));
     if (c === 'text') return 'text';
     if (c === 'numeric') renumber = false;
   }

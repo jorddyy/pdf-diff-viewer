@@ -7,7 +7,7 @@ export interface Token {
   line: number;
 }
 
-const COMPARED = new Set(['body', 'heading', 'caption', 'table', 'equation', 'toc']);
+const COMPARED = new Set(['body', 'heading', 'caption', 'table', 'equation', 'toc', 'footnote']);
 
 /** The comparison stream of a document: words in reading order, with end-of-line hyphenation undone. */
 export function tokenize(doc: DocModel): Token[] {
@@ -48,7 +48,7 @@ export function tokenize(doc: DocModel): Token[] {
       else if (line.kind === 'equation' && k === line.words.length - 1 && /^\((?:[A-Z]\.)?\d+[a-z]?\)[.,]?$/.test(norm)) norm = '(#)';
       const tok: Token = { norm, words: [wid], line: line.id };
       const last = k === line.words.length - 1;
-      if (last && line.kind === 'body' && /[a-z]{2}-$/i.test(w.norm)) pending = tok;
+      if (last && (line.kind === 'body' || line.kind === 'footnote') && /[a-z]{2}-$/i.test(w.norm)) pending = tok;
       else tokens.push(tok);
     });
   }

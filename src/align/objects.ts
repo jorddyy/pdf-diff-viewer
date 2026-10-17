@@ -23,6 +23,8 @@ export interface ObjectMatch {
   /** Figures only. */
   status: FigureStatus;
   parts: PartMatch[];
+  /** Figures only: some panel is placed at another size (a 2 × 2 grid made one column). */
+  resized?: boolean;
 }
 
 /**
@@ -180,13 +182,26 @@ export function matchObjects(A: DocModel, B: DocModel, al: Alignment, overrides:
   for (const o of B.objects) if (!pairedB.has(o.id)) out.push(single(o.kind, null, o.id));
   for (const m of out) {
     if (m.kind !== 'figure' || m.status !== 'pending') continue;
-    if (m.parts.length && m.parts.every((p) => p.sameHash)) m.status = 'identical';
+    // Panels are compared at a fixed width, so a new size or arrangement (a
+    // 2 × 2 grid made one column, as reviewers often ask) is checked apart.
+    m.resized = resized(A.objects[m.a!], B.objects[m.b!], m.parts);
+    if (m.parts.length && m.parts.every((p) => p.sameHash)) m.status = m.resized ? 'changed' : 'identical';
   }
   // Order by position in the new version (removed objects by their old position).
   const pos = (m: ObjectMatch) => (m.b !== null ? B.objects[m.b].page * 1e4 + B.objects[m.b].box[1] : A.objects[m.a!].page * 1e4 + A.objects[m.a!].box[1] - 0.5);
   out.sort((x, y) => pos(x) - pos(y));
   out.forEach((m, i) => (m.id = i));
   return out;
+}
+
+/** Some panel's width or height differs by more than 10% between the versions. */
+export function resized(oa: DocObject, ob: DocObject, parts: PartMatch[]): boolean {
+  const off = (x: number, y: number) => Math.abs(x - y) > 0.1 * Math.max(x, y);
+  return parts.some((p) => {
+    if (p.a === null || p.b === null) return false;
+    const [ra, rb] = [oa.parts[p.a], ob.parts[p.b]];
+    return off(ra[2] - ra[0], rb[2] - rb[0]) || off(ra[3] - ra[1], rb[3] - rb[1]);
+  });
 }
 
 function words(s: string): Map<string, number> {

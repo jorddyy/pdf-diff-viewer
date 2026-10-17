@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { CHANGED_THRESHOLD, inkDiff, type Raster } from '../src/figures/compare';
 
 /** A made-up plot: frame, ticks, a curve and some blocks standing in for labels. */
-function plot(opts: { scale?: number; dx?: number; dy?: number; extra?: boolean } = {}): Raster {
+function plot(opts: { scale?: number; dx?: number; dy?: number; extra?: boolean; fill?: [number, number, number] } = {}): Raster {
   const [w, h] = [240, 160];
-  const { scale = 1, dx = 0, dy = 0, extra = false } = opts;
+  const { scale = 1, dx = 0, dy = 0, extra = false, fill } = opts;
   const data = new Uint8ClampedArray(w * h * 4).fill(255);
   const dot = (x: number, y: number, r: number) => {
     for (let j = -r; j <= r; j++)
@@ -35,6 +35,13 @@ function plot(opts: { scale?: number; dx?: number; dy?: number; extra?: boolean 
   }
   for (const [x, y] of [[60, 40], [120, 50], [170, 35]]) for (let k = 0; k < 14; k++) line(x + k, y, x + k, y + 8);
   if (extra) for (let k = 0; k < 40; k++) line(100 + k, 100, 100 + k, 125);
+  // A coloured band, like a confidence region.
+  if (fill)
+    for (let y = 95; y < 125; y++)
+      for (let x = 40; x < 200; x++) {
+        const p = (y * w + x) * 4;
+        if (data[p] === 255) data.set(fill, p);
+      }
   return { data, width: w, height: h };
 }
 
@@ -50,6 +57,12 @@ describe('inkDiff', () => {
   it('tolerates a slightly different size of the same plot', () => {
     expect(inkDiff(plot(), plot({ scale: 1.05 }))).toBeLessThan(CHANGED_THRESHOLD);
     expect(inkDiff(plot(), plot({ scale: 0.95, dx: 2 }))).toBeLessThan(CHANGED_THRESHOLD);
+  });
+
+  it('sees a colour change that keeps the brightness', () => {
+    // Red and green of almost the same luminance.
+    expect(inkDiff(plot({ fill: [220, 60, 60] }), plot({ fill: [220, 60, 60] }))).toBeLessThan(CHANGED_THRESHOLD);
+    expect(inkDiff(plot({ fill: [220, 60, 60] }), plot({ fill: [40, 140, 60] }))).toBeGreaterThan(CHANGED_THRESHOLD);
   });
 
   it('still reports a real change', () => {

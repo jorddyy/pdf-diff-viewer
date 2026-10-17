@@ -12,7 +12,7 @@ import { buildAnnotated, textChangeSpecs, type AnnotationSpec } from './export/a
 import type { SummaryItem } from './export/types';
 import { CompareModal, type CompareRequest } from './ui/CompareModal';
 import { matchObjects, type FigureStatus, type ObjectMatch } from './align/objects';
-import { CHANGED_THRESHOLD, COMPARE_VERSION, inkDiff, renderRegions, type Raster } from './figures/compare';
+import { CHANGED_THRESHOLD, COMPARE_VERSION, comparePanels } from './figures/compare';
 import { addFigureMarks, panelStates, sideMarks, type PanelState, type Side } from './ui/marks';
 import { buildSyncMap, mapPos } from './ui/sync';
 import { parseComments, removeItem } from './comments/parse';
@@ -481,13 +481,9 @@ export function App() {
           const oa = da.objects[m.a!];
           const ob = db.objects[m.b!];
           const todo = m.parts.filter((p) => !p.sameHash && p.a !== null && p.b !== null);
-          let ra: Raster[] = [];
-          let rb: Raster[] = [];
+          let scores: number[] = [];
           try {
-            if (todo.length) {
-              ra = await renderRegions(pa!, oa.page, todo.map((p) => oa.parts[p.a!]), 240);
-              rb = await renderRegions(pb!, ob.page, todo.map((p) => ob.parts[p.b!]), 240);
-            }
+            if (todo.length) scores = await comparePanels(pa!, oa.page, todo.map((p) => oa.parts[p.a!]), pb!, ob.page, todo.map((p) => ob.parts[p.b!]));
           } catch {
             if (!cancelled) setFigError('Some figures could not be compared. Their status is unknown; reopen this comparison to retry.');
             continue;
@@ -496,9 +492,9 @@ export function App() {
           const diffs = m.parts.map((p) => {
             if (p.sameHash) return 0;
             const k = todo.indexOf(p);
-            return k >= 0 && ra[k] && rb[k] ? inkDiff(ra[k], rb[k]) : null;
+            return k >= 0 && scores[k] !== undefined ? scores[k] : null;
           });
-          const changed = diffs.some((d) => d === null || d > CHANGED_THRESHOLD) || !m.parts.length;
+          const changed = diffs.some((d) => d === null || d > CHANGED_THRESHOLD) || !m.parts.length || !!m.resized;
           const result: FigureResult = { status: changed ? 'changed' : 'identical', diffs };
           setFigStatus((prev) => new Map(prev).set(m.id, result));
           // Only successful comparisons are kept; failures are retried next time.
@@ -543,7 +539,9 @@ export function App() {
       const st = figStatus.get(m.id);
       let detail = '';
       if (status === 'changed') {
-        detail = m.parts.length > 1 ? panelSummary(m, st?.diffs) : 'The graphic differs.';
+        const graphics = m.parts.some((p, i) => p.a === null || p.b === null || (!p.sameHash && !((st?.diffs?.[i] ?? 1) <= CHANGED_THRESHOLD)));
+        if (m.resized && !graphics) detail = 'Same graphics, new size or arrangement.';
+        else detail = (m.parts.length > 1 ? panelSummary(m, st?.diffs) : 'The graphic differs.') + (m.resized ? ' · new size or arrangement' : '');
       } else if (status === 'pending') detail = figError ? 'Comparison unavailable; change status unknown.' : 'Comparing the graphics…';
       else if (status === 'added') detail = 'New in this version.';
       else if (status === 'removed') detail = 'Not in the new version.';

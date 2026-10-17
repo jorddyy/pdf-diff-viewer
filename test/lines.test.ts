@@ -48,6 +48,32 @@ describe('buildLines', () => {
   });
 });
 
+describe('piecesToWords', () => {
+  it('reads stacked scripts run by run: an asymmetric uncertainty stays legible', () => {
+    // "4.52" with "+0.31" above "−0.27", split by font changes as pdf.js reports them.
+    const words = piecesToWords([
+      P('4.52', 100, 200, 12, true, 24),
+      P('+0', 124, 196, 8, false, 8),
+      P('−0', 124, 203, 8, false, 8),
+      P('.', 132, 196, 8, false, 2),
+      P('.', 132, 203, 8, false, 2),
+      P('31', 134, 196, 8, false, 8),
+      P('27', 134, 203, 8, false, 8),
+    ]);
+    expect(words.map((w) => w.text)).toEqual(['4.52+0.31−0.27']);
+  });
+
+  it('splits footnote marks off their words', () => {
+    const after = piecesToWords([P('the', 72, 100, 11), P('pond', 92, 100, 11), P('freezes', 120, 100, 11, true, 40), P('1', 160, 96, 7, false, 4)]);
+    expect(after.map((w) => [w.text, !!w.note])).toEqual([['the', false], ['pond', false], ['freezes', false], ['1', true]]);
+    const before = piecesToWords([P('2', 72, 697, 7, true, 4), P('Only', 76, 700, 9, false, 18), P('parts', 96, 700, 9)]);
+    expect(before.map((w) => [w.text, !!w.note])).toEqual([['2', true], ['Only', false], ['parts', false]]);
+    // Exponents and subscripts stay with their base.
+    expect(piecesToWords([P('10', 72, 100, 11, true, 11), P('3', 83, 96, 7, false, 4)]).map((w) => w.text)).toEqual(['103']);
+    expect(piecesToWords([P('cos', 72, 100, 11, true, 17), P('2', 89, 96, 7, false, 4)]).map((w) => w.text)).toEqual(['cos2']);
+  });
+});
+
 describe('buildLines in tables', () => {
   it('keeps a superscript that sticks out past the row end with its base ("× 10−3")', () => {
     const size = 10.9;

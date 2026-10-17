@@ -28,6 +28,17 @@ describe('classifyPair', () => {
     expect(classifyPair('0.7', '0.9', ['explanation'], true)).toBe('renumber');
   });
 
+  it('reports numbers in a citation list as renumbering', () => {
+    const cite = (x: string, y: string, ...prev: string[]) => classifyPair(x, y, prev, false, true);
+    expect(cite('[13-15].', '[16-18].', 'mesons')).toBe('renumber');
+    expect(cite('33,', '36,', '21,', '[8,')).toBe('renumber');
+    expect(cite('[4,61,62],', '[4,66,67],', 'large')).toBe('renumber');
+    // A decimal is a value, also between brackets.
+    expect(cite('[37.4,', '[37.9,', 'in')).toBe('numeric');
+    // Without the citation context the same pair is a number change.
+    expect(c('[13-15].', '[16-18].', 'mesons')).toBe('numeric');
+  });
+
   it('separates other edits', () => {
     expect(c('fDs', 'fDs+', 'the')).toBe('text');
     expect(c('kaons', 'pions', 'on')).toBe('text');

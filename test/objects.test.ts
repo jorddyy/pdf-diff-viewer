@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchObjects } from '../src/align/objects';
+import { matchObjects, resized } from '../src/align/objects';
 import type { DocModel, DocObject } from '../src/extract/types';
 import type { Alignment } from '../src/align/align';
 
@@ -40,5 +40,17 @@ describe('matchObjects overrides', () => {
     const m = matchObjects(A, B, noAlign, [{ kind: 'figure', a: '1', b: null }]);
     expect(m.find((x) => x.a === 0)?.b).toBeNull();
     expect(m.find((x) => x.a === 0)?.status).toBe('removed');
+  });
+});
+
+describe('resized', () => {
+  const fig = (parts: [number, number, number, number][]): DocObject => ({ id: 0, kind: 'figure', number: '6', page: 0, box: parts[0], parts, hashes: parts.map(() => 'h'), caption: '', lines: [] });
+  const same = [0, 1].map((i) => ({ a: i, b: i, sameHash: true }));
+  it('reports identical panels shown at another size, not a small shift', () => {
+    const grid = fig([[72, 100, 180, 180], [190, 100, 298, 180]]);
+    const column = fig([[72, 100, 290, 260], [72, 270, 290, 430]]);
+    const nudged = fig([[74, 102, 182, 183], [192, 102, 300, 183]]);
+    expect(resized(grid, column, same)).toBe(true);
+    expect(resized(grid, nudged, same)).toBe(false);
   });
 });

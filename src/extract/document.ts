@@ -1,13 +1,13 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { DocModel, Line, PageInfo, Piece, Rect, TextQuality, Word } from './types';
-import { area, contains, mode, transformRect, type Matrix } from './geometry';
+import { area, contains, invert, isRule, mode, multiply, transformRect, type Matrix } from './geometry';
 import { PdfFile, scanPage, type Inflate } from '../pdf/scan';
-import { itemsToPieces } from './words';
+import { itemsToPieces, sidewaysTurn, type TextItemLike } from './words';
 import { detectLineNumbers } from './linenumbers';
 import { buildLines } from './lines';
 import { extractGraphics, type OpsTable } from './graphics';
-import { markHeadersFooters, markObjects, markSections, markToc, type OutlineEntry } from './structure';
-import { normalizeToken } from './normalize';
+import { markFootnotes, markHeadersFooters, markObjects, markSections, markToc, type OutlineEntry } from './structure';
+import { NOTE_MARK, normalizeToken } from './normalize';
 
 export type Progress = (done: number, total: number) => void;
 
@@ -34,6 +34,7 @@ export async function extractDocument(
   const pdf = handles[0];
   const quality: TextQuality = { glyphs: 0, suspicious: 0, ok: true };
   const pages: PageInfo[] = new Array(pdf.numPages);
+  const turned = new Map<number, { width: number; height: number; transform: Matrix; back: Matrix }>();
   const pagePieces: Piece[][] = new Array(pdf.numPages);
 
   // Placements of figures and table rules, from the content streams directly.
@@ -56,8 +57,14 @@ export async function extractDocument(
         const p = next++;
         const page = await h.getPage(p + 1);
         const viewport = page.getViewport({ scale: 1 });
-        const vt = viewport.transform as Matrix;
         const tc = await page.getTextContent();
+        // A page set sideways (a landscape table on a portrait page) is read
+        // in a turned frame, where its text is upright; see `turnBack`.
+        const turn = sidewaysTurn(tc.items as TextItemLike[], viewport.transform as Matrix, viewport.width, viewport.height);
+        const vt = turn ? multiply(viewport.transform as Matrix, turn) : (viewport.transform as Matrix);
+        const width = turn ? viewport.height : viewport.width;
+        const height = turn ? viewport.width : viewport.height;
+        if (turn) turned.set(p, { width: viewport.width, height: viewport.height, transform: viewport.transform as Matrix, back: invert(turn) });
         pagePieces[p] = itemsToPieces(tc.items, tc.styles as any, vt, quality);
         let graphics: Rect[] = [];
         let graphicHashes: string[] = [];
@@ -68,11 +75,11 @@ export async function extractDocument(
             const sp = await scanPage(scanned.file, scanned.pages[p]);
             for (const g of sp.graphics) {
               const r = transformRect(vt, g.rect);
-              if (!keepGraphic(r, viewport.width, viewport.height)) continue;
+              if (!keepGraphic(r, width, height)) continue;
               graphics.push(r);
               graphicHashes.push(g.hash);
             }
-            rules = sp.rules.map((r) => transformRect(vt, r));
+            rules = sp.rules.map((r) => transformRect(vt, r)).filter(isRule);
             ok = true;
           } catch {
             ok = false;
@@ -83,10 +90,10 @@ export async function extractDocument(
         if (!ok && hasCaption(tc.items as { str?: string }[])) {
           const ol = await page.getOperatorList({ annotationMode: 0 });
           ({ graphics, rules } = extractGraphics(ol as any, OPS, vt));
-          graphics = graphics.filter((r) => keepGraphic(r, viewport.width, viewport.height));
+          graphics = graphics.filter((r) => keepGraphic(r, width, height));
           graphicHashes = graphics.map(() => '');
         }
-        pages[p] = { width: viewport.width, height: viewport.height, transform: vt, graphics, graphicHashes, rules };
+        pages[p] = { width, height, transform: vt, graphics, graphicHashes, rules };
         page.cleanup();
         opts.onProgress?.(++done, pdf.numPages);
       }
@@ -121,12 +128,26 @@ export async function extractDocument(
 
   pagePieces.forEach((pieces, page) => {
     const graphics = pages[page].graphics;
+    const centre = (p: Piece): [number, number] => [(p.x0 + p.x1) / 2, (p.top + p.bottom) / 2];
+    const inGraphic = (p: Piece) => graphics.some((g) => contains(g, ...centre(p), 1));
+    // Fonts of plots: on this page mostly inside graphics (at least a few
+    // glyphs) and never far from one. Their glyphs near a graphic (tick labels
+    // of a panel that cropping hid) are not page text either. A caption font
+    // that a graphic box happens to overlap is not one of them.
+    const near = (p: Piece) => graphics.some((g) => contains(g, ...centre(p), 60));
+    const use = new Map<string | undefined, { inside: number; outside: number }>();
+    for (const p of pieces) {
+      const u = use.get(p.font) ?? { inside: 0, outside: 0 };
+      if (inGraphic(p)) u.inside++;
+      else u.outside += near(p) ? 1 : Infinity;
+      use.set(p.font, u);
+    }
+    const plotFonts = new Set([...use].filter(([, u]) => u.inside >= 5 && u.inside > u.outside).map(([f]) => f));
     // Text inside figures (axis labels, legends) is compared visually, not as text.
     const text = pieces.filter((p) => {
-      if (ln.pieces.has(p)) return false;
-      const cx = (p.x0 + p.x1) / 2;
-      const cy = (p.top + p.bottom) / 2;
-      if (graphics.some((g) => contains(g, cx, cy, 1))) return false;
+      if (ln.pieces.has(p) || inGraphic(p)) return false;
+      if (p.font && plotFonts.has(p.font) && near(p)) return false;
+      const [cx, cy] = centre(p);
       // Small text hugging a graphic: plot titles that cropping hid but left in the file.
       const hugging = (g: Rect) => cx >= g[0] && cx <= g[2] && ((cy < g[1] && cy >= g[1] - 12) || (cy > g[3] && cy <= g[3] + 12));
       return !(p.size <= 0.8 * bodySize && graphics.some(hugging));
@@ -146,7 +167,7 @@ export async function extractDocument(
         object: -1,
       };
       for (const w of raw.words) {
-        const word: Word = { id: doc.words.length, text: w.text, norm: normalizeToken(w.text), page, box: w.box, line: line.id };
+        const word: Word = { id: doc.words.length, text: w.text, norm: w.note ? NOTE_MARK : normalizeToken(w.text), page, box: w.box, line: line.id };
         doc.words.push(word);
         line.words.push(word.id);
       }
@@ -156,10 +177,39 @@ export async function extractDocument(
 
   markHeadersFooters(doc);
   markToc(doc);
+  markFootnotes(doc);
   markObjects(doc);
   markSections(doc, await readOutline(pdf));
+  turnBack(doc, turned);
   doc.label = detectLabel(doc, name);
   return doc;
+}
+
+/**
+ * Sideways pages were analysed in their turned frame; bring every box back to
+ * the page as displayed, so marks, figure crops and exports line up.
+ */
+function turnBack(doc: DocModel, turned: Map<number, { width: number; height: number; transform: Matrix; back: Matrix }>): void {
+  if (!turned.size) return;
+  const map = (page: number, r: Rect) => {
+    const t = turned.get(page);
+    return t ? transformRect(t.back, r) : r;
+  };
+  for (const w of doc.words) w.box = map(w.page, w.box);
+  for (const l of doc.lines) {
+    if (!turned.has(l.page)) continue;
+    l.box = map(l.page, l.box);
+    l.base = l.box[3];
+  }
+  for (const o of doc.objects) {
+    o.box = map(o.page, o.box);
+    o.parts = o.parts.map((r) => map(o.page, r));
+  }
+  for (const s of doc.sections) if (turned.has(s.page) && s.line >= 0) s.y = doc.lines[s.line].box[1];
+  for (const [p, t] of turned) {
+    const info = doc.pages[p];
+    doc.pages[p] = { ...info, width: t.width, height: t.height, transform: t.transform, graphics: info.graphics.map((r) => map(p, r)), rules: info.rules.map((r) => map(p, r)) };
+  }
 }
 
 /** Ignore specks and page-sized wrappers (e.g. browser re-prints). */

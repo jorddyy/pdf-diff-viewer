@@ -1,5 +1,5 @@
 import type { Rect } from './types';
-import { IDENTITY, multiply, transformRect, type Matrix } from './geometry';
+import { IDENTITY, isRule, multiply, transformRect, type Matrix } from './geometry';
 
 export interface OperatorListLike {
   fnArray: number[];
@@ -76,7 +76,7 @@ export function extractGraphics(
         const minMax = args?.[2] as ArrayLike<number> | undefined;
         if (!minMax || minMax.length < 4 || !Number.isFinite(minMax[0])) break;
         const r = toPage([minMax[0], minMax[1], minMax[2], minMax[3]], ctm);
-        if (r[3] - r[1] <= 2 && r[2] - r[0] >= 20) rules.push(r);
+        if (isRule(r)) rules.push(r);
         break;
       }
     }

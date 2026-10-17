@@ -33,7 +33,7 @@ function charWidth(c: string): number {
   return CM_WIDTHS[c] ?? 0.6;
 }
 
-interface TextItemLike {
+export interface TextItemLike {
   str: string;
   transform: number[];
   width: number;
@@ -43,6 +43,32 @@ interface TextItemLike {
 interface StyleLike {
   ascent?: number;
   descent?: number;
+}
+
+/**
+ * The turn that makes a sideways page (a landscape table set with
+ * \begin{sidewaystable} on a portrait page) upright, or null when most of
+ * its text already reads left to right. The turned frame is height × width.
+ */
+export function sidewaysTurn(items: TextItemLike[], viewportTransform: Matrix, width: number, height: number): Matrix | null {
+  let upright = 0;
+  let up = 0;
+  let down = 0;
+  for (const item of items) {
+    if (typeof item.str !== 'string') continue;
+    const n = item.str.replace(/\s/g, '').length;
+    const m = multiply(item.transform as Matrix, viewportTransform);
+    const size = Math.hypot(m[0], m[1]);
+    if (!n || !size || Math.abs(m[0]) > 1e-3 * size) {
+      if (n && m[0] > 0) upright += n;
+      continue;
+    }
+    if (m[1] < 0) up += n;
+    else down += n;
+  }
+  if (Math.max(up, down) < Math.max(50, upright)) return null;
+  // Reading upwards: (x, y) → (height − y, x); reading downwards: (x, y) → (y, width − x).
+  return up >= down ? [0, 1, -1, 0, height, 0] : [0, -1, 1, 0, 0, width];
 }
 
 /**
@@ -102,6 +128,7 @@ export function itemsToPieces(
         top: base - ascent * size,
         bottom: base + descent * size,
         spaceBefore: sawSpace,
+        font: item.fontName,
       });
       runStart = -1;
       sawSpace = false;

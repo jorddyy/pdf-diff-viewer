@@ -614,7 +614,10 @@ export async function scanPage(file: PdfFile, page: { dict: Dict; resources: Dic
       case 'n':
         if (path && op !== 'n') {
           const r = rectThrough(ctm, path);
-          if (r[3] - r[1] <= 2 && r[2] - r[0] >= 20) rules.push(r);
+          // Horizontal or vertical: what is horizontal on screen depends on the page rotation.
+          const w = r[2] - r[0];
+          const h = r[3] - r[1];
+          if ((h <= 2 && w >= 20) || (w <= 2 && h >= 20)) rules.push(r);
         }
         path = null;
         break;

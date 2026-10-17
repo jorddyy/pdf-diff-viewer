@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { PDFDocument, StandardFonts, rgb } from '@pdfme/pdf-lib';
+import { PDFDocument, StandardFonts, degrees, rgb } from '@pdfme/pdf-lib';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { extractDocument } from '../src/extract/document';
 import { nodeInflate } from '../scripts/node-pdf';
@@ -322,5 +322,74 @@ describe('tables and numbered equations', () => {
     expect(pairs).toContainEqual([null, 'equation 1', false]);
     expect(pairs).toContainEqual(['table 1', 'table 1', false]);
     expect(pairs).toHaveLength(4);
+  });
+});
+
+// Numbered body text with a citation list and footnotes, then a table set sideways on a portrait page.
+async function makeNotesPdf(opts: { cites: string; extraNote: boolean; rainfall: string }): Promise<ArrayBuffer> {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const page = pdf.addPage([595, 842]);
+  let y = 780;
+  let line = 1;
+  const body = (text: string, mark?: string) => {
+    page.drawText(String(line++), { x: 30, y, size: 8, font });
+    page.drawText(text, { x: 65, y, size: 11, font });
+    if (mark) page.drawText(mark, { x: 65 + font.widthOfTextAtSize(text, 11), y: y + 4, size: 7, font });
+    y -= 18;
+  };
+  const notes: string[] = [];
+  garden.slice(0, 3).forEach((t) => body(t));
+  if (opts.extraNote) {
+    body('The orchard keeps three old varieties', '1');
+    notes.push('The varieties are listed in the village archive.');
+  }
+  body(`Earlier surveys counted the birds ${opts.cites}.`);
+  body('In a cold winter the shallow pond freezes', String(notes.length + 1));
+  notes.push('Only the shallow parts freeze completely.');
+  garden.slice(3).forEach((t) => body(t));
+  let ny = 120;
+  notes.forEach((text, i) => {
+    page.drawText(String(i + 1), { x: 65, y: ny + 3, size: 7, font });
+    page.drawText(text, { x: 65 + font.widthOfTextAtSize(String(i + 1), 7), y: ny, size: 9, font });
+    ny -= 12;
+  });
+
+  // Sideways table: everything turned by 90 degrees, reading upwards.
+  const side = pdf.addPage([595, 842]);
+  const up = (text: string, x: number, at: number, size: number) => side.drawText(text, { x, y: at, size, font, rotate: degrees(90) });
+  up('Table 1: An invented record of rainfall in the garden, by season.', 100, 150, 9);
+  const rule = (x: number) => side.drawLine({ start: { x, y: 150 }, end: { x, y: 650 }, thickness: 0.8, color: rgb(0, 0, 0) });
+  rule(110);
+  const rows = [['Season', 'Rainfall', 'Sunny days'], ['Spring', '41.5', '38'], ['Summer', opts.rainfall, '61'], ['Autumn', '77.0', '22'], ['Winter', '68.4', '15']];
+  rows.forEach((row, i) => {
+    row.forEach((cell, c) => up(cell, 125 + i * 16, 160 + c * 140, 10));
+    if (i === 0) rule(130);
+  });
+  rule(125 + rows.length * 16);
+  return new Uint8Array(await pdf.save()).buffer;
+}
+
+describe('footnotes, citations and sideways tables', () => {
+  it('reports renumbered citations and footnotes as such, and reads a sideways table', async () => {
+    const old = await extract(await makeNotesPdf({ cites: '[3, 7-9, 12]', extraNote: false, rainfall: '52.3' }));
+    const next = await extract(await makeNotesPdf({ cites: '[4, 8-10, 13]', extraNote: true, rainfall: '55.1' }));
+    expect(old.lines.filter((l) => l.kind === 'footnote').map((l) => l.text)).toEqual(['1 Only the shallow parts freeze completely.']);
+    expect(next.objects.map((o) => `${o.kind} ${o.number} p${o.page + 1}`)).toEqual(['table 1 p2']);
+
+    const al = alignDocs(old, next);
+    const list = al.changes.map((c) => [c.kind, c.cls, c.label, changed(c.aSegs), changed(c.bSegs)]);
+    // The new footnote and its mark; the old footnote, now number 2, is unchanged.
+    expect(list).toContainEqual(['insert', 'text', 'Footnote', '', '1 The varieties are listed in the village archive.']);
+    expect(list).toContainEqual(['replace', 'renumber', '', '[3, 7-9, 12].', '[4, 8-10, 13].']);
+    expect(list).toContainEqual(['replace', 'numeric', 'Table 1', '52.3', '55.1']);
+    expect(list.filter((c) => c[1] === 'numeric')).toHaveLength(1);
+
+    // The sideways cell is marked where it is drawn: a tall, narrow box on page 2.
+    const cell = al.changes.find((c) => c.cls === 'numeric')!;
+    expect(cell.bPage).toBe(1);
+    expect(cell.bBox[3] - cell.bBox[1]).toBeGreaterThan(cell.bBox[2] - cell.bBox[0]);
+    expect(cell.bBox[0]).toBeGreaterThan(145);
+    expect(cell.bBox[2]).toBeLessThan(165);
   });
 });

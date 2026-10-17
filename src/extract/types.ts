@@ -15,6 +15,8 @@ export interface Piece {
   bottom: number;
   /** Whitespace was emitted right before this piece in content-stream order. */
   spaceBefore: boolean;
+  /** pdf.js font id: an included plot brings font objects of its own. */
+  font?: string;
 }
 
 export type LineKind =
@@ -24,6 +26,7 @@ export type LineKind =
   | 'table'
   | 'equation'
   | 'toc'
+  | 'footnote'
   | 'header'
   | 'footer';
 

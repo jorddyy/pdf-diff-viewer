@@ -78,3 +78,13 @@ export function mode(xs: number[], step = 1): number {
   }
   return best;
 }
+
+/** A thin horizontal rule (table line). */
+export function isRule(r: Rect): boolean {
+  return r[3] - r[1] <= 2 && r[2] - r[0] >= 20;
+}
+
+export function invert(m: Matrix): Matrix {
+  const det = m[0] * m[3] - m[1] * m[2];
+  return [m[3] / det, -m[1] / det, -m[2] / det, m[0] / det, (m[2] * m[5] - m[3] * m[4]) / det, (m[1] * m[4] - m[0] * m[5]) / det];
+}

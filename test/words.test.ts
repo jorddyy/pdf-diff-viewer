@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { itemsToPieces } from '../src/extract/words';
+import { itemsToPieces, sidewaysTurn } from '../src/extract/words';
+import { multiply } from '../src/extract/geometry';
 
 const quality = () => ({ glyphs: 0, suspicious: 0, ok: true });
 
@@ -24,5 +25,23 @@ describe('itemsToPieces', () => {
     expect(pieces.map((p) => p.text)).toEqual(['Table', '13']);
     expect(pieces[0].x0).toBeCloseTo(100);
     expect(pieces[0].base).toBeCloseTo(300);
+  });
+});
+
+describe('sidewaysTurn', () => {
+  const vt: [number, number, number, number, number, number] = [1, 0, 0, -1, 0, 842];
+  const upwards = (str: string, x: number) => ({ str, transform: [0, 10, -10, 0, x, 200], width: 5 * str.length, fontName: 'f' });
+
+  it('turns a page whose text mostly reads upwards, so it can be read left to right', () => {
+    const items = [upwards('Table 1: An invented record of rainfall', 100), upwards('Spring 41.5 38 Summer 52.3 61', 125), { str: '31', transform: [10, 0, 0, 10, 290, 60], width: 10, fontName: 'f' }];
+    const turn = sidewaysTurn(items, vt, 595, 842)!;
+    expect(turn).not.toBeNull();
+    const pieces = itemsToPieces(items, {}, multiply(vt, turn), quality());
+    expect(pieces.slice(0, 3).map((p) => p.text)).toEqual(['Table', '1:', 'An']);
+  });
+
+  it('leaves a normal page with a rotated axis label alone', () => {
+    const items = [{ str: 'A quiet garden stands beside the village library.', transform: [11, 0, 0, 11, 72, 700], width: 250, fontName: 'f' }, upwards('Rainfall', 80)];
+    expect(sidewaysTurn(items, vt, 595, 842)).toBeNull();
   });
 });
