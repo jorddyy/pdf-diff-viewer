@@ -942,12 +942,16 @@ export function App() {
     if (range) followRef.current?.({ top: range.top.page * 1e4 + range.top.y, bottom: range.bottom.page * 1e4 + range.bottom.y });
   };
 
-  // Keyboard: j/n next change, k/p previous.
+  // Keyboard: j/n next change, k/p previous, Esc clears the selection.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!al || compare || e.ctrlKey || e.metaKey || e.altKey) return;
       const t = e.target as HTMLElement;
       if (t.closest('input, textarea, select, [contenteditable]')) return;
+      if (e.key === 'Escape') {
+        if (selected !== null && !document.querySelector('.modal')) setSelected(null);
+        return;
+      }
       const list = entries.filter((x) => filters[entryCategory(x)]);
       if (!list.length) return;
       const idx = selected === null ? -1 : list.findIndex((x) => x.key === selected);

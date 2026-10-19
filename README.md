@@ -48,7 +48,9 @@ Open the page, drop two or more PDFs on it.
   (figure, table, equation, section and citation numbers; hidden by default)
   and the table of contents (hidden by default).
 - Click a change in the list to jump to it in both versions, or click a
-  highlight on a page to find its entry in the list. `j`/`n` and `k`/`p` step
+  highlight on a page to find its entry in the list. The selected change is
+  shown in full colour with a bar in the margin, the other highlights fade a
+  little; `Esc` clears the selection. `j`/`n` and `k`/`p` step
   through the changes. Scrolling is synchronised between the two versions,
   and the list on the left scrolls along, marking the entries that are on
   screen.

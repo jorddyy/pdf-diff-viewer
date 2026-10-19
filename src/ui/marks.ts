@@ -11,6 +11,8 @@ export interface Mark {
   title?: string;
   /** Small label drawn on the mark (figure panels). */
   label?: string;
+  /** Right edge of the text column (text changes): where the selection bar goes. */
+  edge?: number;
 }
 
 export type Side = 'a' | 'b';
@@ -37,13 +39,14 @@ export function sideMarks(doc: DocModel, al: Alignment, side: Side, visible: (c:
     const cls = markClass(c, side);
     const group = side === 'a' ? c.aTokens : c.bTokens;
     if (!group.length) {
-      add(side === 'a' ? c.aPage : c.bPage, { box: side === 'a' ? c.aBox : c.bBox, cls: 'caret ' + cls, key: `t${c.id}` });
+      add(side === 'a' ? c.aPage : c.bPage, { box: side === 'a' ? c.aBox : c.bBox, cls: 'caret ' + cls, key: `t${c.id}`, edge: doc.bodyRight });
       continue;
     }
     // Merge consecutive words on the same line into one rectangle.
+    const runs: { page: number; box: Rect }[] = [];
     let cur: { line: number; page: number; box: Rect } | null = null;
     const flush = () => {
-      if (cur) add(cur.page, { box: cur.box, cls, key: `t${c.id}` });
+      if (cur) runs.push({ page: cur.page, box: lineBand(doc, cur.line, cur.box) });
       cur = null;
     };
     for (const t of group) {
@@ -58,8 +61,44 @@ export function sideMarks(doc: DocModel, al: Alignment, side: Side, visible: (c:
       }
     }
     flush();
+    for (const r of uniteOverlaps(runs)) add(r.page, { box: r.box, cls, key: `t${c.id}`, edge: doc.bodyRight });
   }
   return byPage;
+}
+
+/**
+ * Overlapping rectangles of one change become one. The rows of a display formula
+ * (numerator, sum, limits, scripts) are separate lines whose tints would otherwise
+ * multiply into darker patches.
+ */
+function uniteOverlaps(runs: { page: number; box: Rect }[]): { page: number; box: Rect }[] {
+  for (let merged = true; merged; ) {
+    merged = false;
+    for (let i = 0; i < runs.length; i++)
+      for (let j = i + 1; j < runs.length; j++) {
+        const a = runs[i].box;
+        const b = runs[j].box;
+        if (runs[i].page !== runs[j].page || a[0] >= b[2] || b[0] >= a[2] || a[1] >= b[3] || b[1] >= a[3]) continue;
+        runs[i].box = [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
+        runs.splice(j--, 1);
+        merged = true;
+      }
+  }
+  return runs;
+}
+
+/**
+ * A run's rectangle clipped to the band around its line's baseline. Accents, super-
+ * and subscripts (`D*0`, `B0s`) otherwise stretch it into the lines above and below.
+ * Display equations keep their full boxes: fractions and limits are separate rows.
+ */
+function lineBand(doc: DocModel, lineId: number, box: Rect): Rect {
+  const l = doc.lines[lineId];
+  if (!l || l.kind === 'equation') return box;
+  const top = Math.max(box[1], l.base - 0.78 * l.size);
+  const bottom = Math.min(box[3], l.base + 0.25 * l.size);
+  // A run made only of a script above or below the band keeps its own box.
+  return bottom - top < 0.3 * (box[3] - box[1]) ? box : [box[0], top, box[2], bottom];
 }
 
 export type PanelState = 'same' | 'changed' | 'new' | 'removed' | 'pending';

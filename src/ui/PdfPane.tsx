@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { TextLayer, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist';
 import type { Mark } from './marks';
+import type { Rect } from '../extract/types';
 import type { Pos } from './sync';
 
 /** Vertical space between pages; the page number sits in it. */
@@ -187,7 +188,7 @@ export function PdfPane({ pdf, pages, scale, maxWidth, marks, selected, control,
           </button>
         </div>
       )}
-      <div class="pane-inner" style={{ paddingTop: `${GAP}px`, gap: `${GAP}px`, paddingBottom: `${GAP}px`, paddingLeft: `${PANE_PAD}px`, paddingRight: `${PANE_PAD}px` }}>
+      <div class={`pane-inner${selected === null ? '' : ' has-sel'}`} style={{ paddingTop: `${GAP}px`, gap: `${GAP}px`, paddingBottom: `${GAP}px`, paddingLeft: `${PANE_PAD}px`, paddingRight: `${PANE_PAD}px` }}>
         {pages.map((p, i) => (
           <PageView
             key={i}
@@ -382,6 +383,21 @@ function PageView({ pdf, index, width, height, scale, marks, selected, onMarkCli
     return best;
   };
 
+  // One margin bar for the selected text change on this page, instead of an outline
+  // around each of its runs.
+  const selBand = useMemo(() => {
+    const sel = marks?.filter((m) => m.key === selected && m.edge !== undefined);
+    if (!sel?.length) return null;
+    const box: Rect = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const m of sel) {
+      box[0] = Math.min(box[0], m.box[0]);
+      box[1] = Math.min(box[1], m.box[1]);
+      box[2] = Math.max(box[2], m.box[2]);
+      box[3] = Math.max(box[3], m.box[3]);
+    }
+    return { box, edge: Math.max(box[2], sel[0].edge!) };
+  }, [marks, selected]);
+
   return (
     <div
       class={`page${hover || overLink ? ' over-mark' : ''}`}
@@ -432,6 +448,16 @@ function PageView({ pdf, index, width, height, scale, marks, selected, onMarkCli
             {m.label && <span class="mk-label">{m.label}</span>}
           </div>
         ))}
+        {selBand && (
+          <div
+            class="sel-bar"
+            style={{
+              left: `${Math.min(selBand.edge + 10, width - 6) * scale}px`,
+              top: `${selBand.box[1] * scale - 2}px`,
+              height: `${(selBand.box[3] - selBand.box[1]) * scale + 4}px`,
+            }}
+          />
+        )}
       </div>
       <div class="overlay links">
         {links.map(

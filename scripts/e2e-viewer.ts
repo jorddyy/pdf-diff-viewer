@@ -166,6 +166,13 @@ for (const attempt of [1, 2]) {
   check(`clicking a highlight reveals its entry (${attempt})`, !!pos && pos.rel > 0.2 && pos.rel < 0.8, pos ? `entry at ${(100 * pos.rel).toFixed(0)}% of the list` : 'no selected entry');
 }
 
+// The selected change has a margin bar; Esc clears the selection.
+const bars = (await page.$$('.sel-bar')).length;
+await page.keyboard.press('Escape');
+await sleep(300);
+const leftover = await page.evaluate(() => document.querySelectorAll('.mk.sel, .chg.sel, .sel-bar').length);
+check('Esc clears the selected change', bars > 0 && leftover === 0, `${bars} bars before, ${leftover} selected after`);
+
 // Go to page: type a page number in the new version's page box.
 await page.evaluate(() => window.getSelection()?.removeAllRanges());
 const boxes = await page.$$('.pagebox input');

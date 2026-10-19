@@ -7,6 +7,17 @@ The running version is shown next to the title in the app (hover for the commit)
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-19
+
+### Changed
+- Calmer page highlights: lighter tints, the selected change in full colour with
+  a bar in the margin instead of a blue outline around every line, and the other
+  highlights fade a little while a change is selected. `Esc` clears the selection.
+
+### Fixed
+- Highlights of lines with super- or subscripts reached into the lines above and
+  below, and display formulas got darker patches where their pieces overlapped.
+
 ## [0.4.1] - 2026-10-17
 
 ### Fixed

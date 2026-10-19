@@ -375,16 +375,34 @@ select {
   white-space: nowrap;
 }
 
+/* Page tints are lighter than the list's; the selected change gets the full colour and
+   the others fade a little so it stands out (Esc clears the selection). */
 .mk.del {
-  background: var(--del);
+  background: rgb(220 38 38 / 0.14);
 }
 
 .mk.ins {
-  background: var(--ins);
+  background: rgb(22 163 74 / 0.16);
 }
 
 .mk.num {
+  background: rgb(234 138 0 / 0.24);
+}
+
+.mk.del.sel {
+  background: var(--del);
+}
+
+.mk.ins.sel {
+  background: var(--ins);
+}
+
+.mk.num.sel {
   background: var(--num);
+}
+
+.has-sel .mk:not(.sel):not(.fig) {
+  opacity: 0.65;
 }
 
 /* Moved, unchanged text: a light tint and dotted underline, not a full highlight. */
@@ -396,6 +414,11 @@ select {
 
 .mk.ren,
 .mk.toc {
+  background: rgb(100 116 139 / 0.12);
+}
+
+.mk.ren.sel,
+.mk.toc.sel {
   background: var(--ren);
 }
 
@@ -410,9 +433,20 @@ select {
   border-left-color: var(--ins-strong);
 }
 
-.mk.sel {
+.mk.fig.sel {
   outline: 2px solid var(--sel);
   outline-offset: 1px;
+  animation: flash 0.9s ease-out 1;
+}
+
+/* The selected text change: one bar in the right margin instead of outlines per run. */
+.sel-bar {
+  position: absolute;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--sel);
+  opacity: 0.75;
+  pointer-events: none;
   animation: flash 0.9s ease-out 1;
 }
 
@@ -1433,3 +1467,4 @@ code {
   margin-left: 6px;
   font-size: 11px;
 }
+
