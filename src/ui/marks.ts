@@ -42,26 +42,7 @@ export function sideMarks(doc: DocModel, al: Alignment, side: Side, visible: (c:
       add(side === 'a' ? c.aPage : c.bPage, { box: side === 'a' ? c.aBox : c.bBox, cls: 'caret ' + cls, key: `t${c.id}`, edge: doc.bodyRight });
       continue;
     }
-    // Merge consecutive words on the same line into one rectangle.
-    const runs: { page: number; box: Rect }[] = [];
-    let cur: { line: number; page: number; box: Rect } | null = null;
-    const flush = () => {
-      if (cur) runs.push({ page: cur.page, box: lineBand(doc, cur.line, cur.box) });
-      cur = null;
-    };
-    for (const t of group) {
-      for (const wid of tokens[t].words) {
-        const w = doc.words[wid];
-        if (cur && cur.line === w.line && w.box[0] - cur.box[2] < 3 * (w.box[3] - w.box[1])) {
-          cur.box = [Math.min(cur.box[0], w.box[0]), Math.min(cur.box[1], w.box[1]), Math.max(cur.box[2], w.box[2]), Math.max(cur.box[3], w.box[3])];
-        } else {
-          flush();
-          cur = { line: w.line, page: w.page, box: [...w.box] as Rect };
-        }
-      }
-    }
-    flush();
-    for (const r of uniteOverlaps(runs)) add(r.page, { box: r.box, cls, key: `t${c.id}`, edge: doc.bodyRight });
+    for (const r of changeRuns(doc, tokens, group)) add(r.page, { box: r.box, cls, key: `t${c.id}`, edge: doc.bodyRight });
   }
   return byPage;
 }
@@ -85,6 +66,33 @@ function uniteOverlaps(runs: { page: number; box: Rect }[]): { page: number; box
       }
   }
   return runs;
+}
+
+/**
+ * Rectangles of one change's words, as the viewer and both PDF exports draw them:
+ * consecutive words on a line merged, clipped to the line (`lineBand`), overlapping
+ * pieces united (`uniteOverlaps`).
+ */
+export function changeRuns(doc: DocModel, tokens: Token[], group: number[]): { page: number; box: Rect }[] {
+  const runs: { page: number; box: Rect }[] = [];
+  let cur: { line: number; page: number; box: Rect } | null = null;
+  const flush = () => {
+    if (cur) runs.push({ page: cur.page, box: lineBand(doc, cur.line, cur.box) });
+    cur = null;
+  };
+  for (const t of group) {
+    for (const wid of tokens[t].words) {
+      const w = doc.words[wid];
+      if (cur && cur.line === w.line && w.box[0] - cur.box[2] < 3 * (w.box[3] - w.box[1])) {
+        cur.box = [Math.min(cur.box[0], w.box[0]), Math.min(cur.box[1], w.box[1]), Math.max(cur.box[2], w.box[2]), Math.max(cur.box[3], w.box[3])];
+      } else {
+        flush();
+        cur = { line: w.line, page: w.page, box: [...w.box] as Rect };
+      }
+    }
+  }
+  flush();
+  return uniteOverlaps(runs);
 }
 
 /**

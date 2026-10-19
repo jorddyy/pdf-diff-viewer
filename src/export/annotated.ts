@@ -2,18 +2,19 @@ import { PDFDocument, PDFHexString, PDFString, rgb, type RGB } from '@pdfme/pdf-
 import type { Alignment, Change } from '../align/align';
 import type { DocModel, Rect } from '../extract/types';
 import { apply, type Matrix } from '../extract/geometry';
-import { TONES } from './sideBySide';
+import { changeRuns } from '../ui/marks';
+import { TINTS, TONES } from './sideBySide';
 
-// Viewers multiply highlight colours with the page, so use light ones.
-const HIGHLIGHT: Record<string, RGB> = {
-  edit: rgb(1, 0.86, 0.25),
-  ins: rgb(0.6, 0.92, 0.6),
-  num: rgb(1, 0.72, 0.35),
-  mv: rgb(0.82, 0.72, 1),
-  ren: rgb(0.85, 0.85, 0.88),
-};
+// Viewers multiply highlight colours with the page at full strength, so each tone is
+// its viewer tint (TONES at TINTS opacity) pre-mixed with white: the same look as on screen.
+const HIGHLIGHT: Record<string, RGB> = Object.fromEntries(
+  Object.entries(TINTS).map(([tone, a]) => {
+    const c = TONES[tone === 'edit' ? 'ins' : tone];
+    return [tone, rgb(1 - a * (1 - c.red), 1 - a * (1 - c.green), 1 - a * (1 - c.blue))];
+  }),
+);
 
-export type AnnotationType = 'Highlight' | 'Caret' | 'Square' | 'Text';
+export type AnnotationType = 'Highlight' | 'Underline' | 'Caret' | 'Square' | 'Text';
 
 export interface AnnotationSpec {
   page: number;
@@ -48,18 +49,14 @@ export function textChangeSpecs(B: DocModel, al: Alignment, changes: Change[]): 
       out.push({ page: c.bPage, type: 'Caret', rects: [c.bBox], tone: 'del', contents });
       continue;
     }
-    // One highlight per page, one rectangle per line.
-    const byPage = new Map<number, Map<number, Rect>>();
-    for (const t of c.bTokens) {
-      for (const wid of al.tokensB[t].words) {
-        const w = B.words[wid];
-        if (!byPage.has(w.page)) byPage.set(w.page, new Map());
-        const lines = byPage.get(w.page)!;
-        const r = lines.get(w.line);
-        lines.set(w.line, r ? [Math.min(r[0], w.box[0]), Math.min(r[1], w.box[1]), Math.max(r[2], w.box[2]), Math.max(r[3], w.box[3])] : ([...w.box] as Rect));
-      }
+    // One annotation per page, with the viewer's rectangles. Moved text is underlined,
+    // as in the viewer.
+    const byPage = new Map<number, Rect[]>();
+    for (const r of changeRuns(B, al.tokensB, c.bTokens)) {
+      if (!byPage.has(r.page)) byPage.set(r.page, []);
+      byPage.get(r.page)!.push(r.box);
     }
-    for (const [page, lines] of byPage) out.push({ page, type: 'Highlight', rects: [...lines.values()], tone, contents });
+    for (const [page, rects] of byPage) out.push({ page, type: tone === 'mv' ? 'Underline' : 'Highlight', rects, tone, contents });
   }
   return out;
 }
@@ -77,7 +74,7 @@ export function toUserQuad(transform: Matrix, r: Rect): [number, number][] {
 
 /**
  * The new version with the changes as standard PDF annotations (highlights
- * with "was: …" notes, carets for deletions, boxes around changed figures).
+ * with "was: …" notes, underlines for moved text, carets for deletions, boxes around changed figures).
  * Readable in any PDF viewer; the original pages are untouched.
  */
 export async function buildAnnotated(bytes: ArrayBuffer, B: DocModel, specs: AnnotationSpec[], subject: string): Promise<Uint8Array> {
@@ -104,7 +101,7 @@ export async function buildAnnotated(bytes: ArrayBuffer, B: DocModel, specs: Ann
       NM: PDFHexString.fromText(`pdfdiff-${n}`),
       F: 4,
     };
-    if (sp.type === 'Highlight') base.QuadPoints = quads.flatMap((q) => q.flat());
+    if (sp.type === 'Highlight' || sp.type === 'Underline') base.QuadPoints = quads.flatMap((q) => q.flat());
     else if (sp.type === 'Caret') rect = [rect[0] - 3, rect[1], rect[2] + 3, rect[3]];
     else if (sp.type === 'Square') base.BS = { W: 1.5, S: 'D', D: [3, 2] };
     else if (sp.type === 'Text') {

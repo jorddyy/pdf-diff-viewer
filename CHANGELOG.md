@@ -7,6 +7,16 @@ The running version is shown next to the title in the app (hover for the commit)
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-19
+
+### Changed
+- PDF exports use the same highlights as the viewer: the lighter tints, kept
+  within their own line, and one block per display formula. The side-by-side
+  export multiplies its tints with the page (text under a highlight keeps its
+  contrast) and underlines moved text with dots; the annotated export colours
+  changed text green like the viewer (the note still says "Changed. Was: …") and
+  marks moved text with an underline annotation.
+
 ## [0.5.0] - 2026-10-19
 
 ### Changed

@@ -1,4 +1,5 @@
 import {
+  BlendMode,
   PDFArray,
   PDFDocument,
   PDFName,
@@ -36,6 +37,9 @@ export const TONES: Record<string, RGB> = {
   fig: rgb(0.92, 0.54, 0),
   cmt: rgb(0.18, 0.36, 0.84),
 };
+
+/** Opacity of the text highlights, as on screen (`.mk` tints in styles.css, nothing selected). */
+export const TINTS: Record<string, number> = { del: 0.14, ins: 0.16, num: 0.24, ren: 0.12, toc: 0.12, mv: 0.07, edit: 0.16 };
 
 /**
  * A PDF with the old page next to the matching new page on every sheet, the
@@ -203,7 +207,10 @@ export function drawMark(page: PDFPage, mk: Mark, ox: number, top: number, bold:
     return;
   }
   const tone = cls.find((c) => TONES[c]) ?? 'edit';
-  page.drawRectangle({ x, y, width, height, color: TONES[tone], opacity: tone === 'ren' || tone === 'toc' ? 0.18 : 0.28 });
+  // Multiplied like on screen, so the text under a highlight keeps its contrast.
+  page.drawRectangle({ x, y, width, height, color: TONES[tone], opacity: TINTS[tone] ?? 0.16, blendMode: BlendMode.Multiply });
+  // Moved text: a faint tint and a dotted underline, as in the viewer.
+  if (tone === 'mv') page.drawLine({ start: { x, y: y + 0.6 }, end: { x: x + width, y: y + 0.6 }, thickness: 1.2, color: TONES.mv, dashArray: [1.2, 1.2] });
 }
 
 function link(out: PDFDocument, page: PDFPage, rect: number[], target: PDFPage): void {
