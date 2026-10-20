@@ -7,6 +7,12 @@ The running version is shown next to the title in the app (hover for the commit)
 
 ## [Unreleased]
 
+### Changed
+- The change list uses the page's highlight colours: light tints in the
+  snippets and full colour for the selected entry, number changes in orange and
+  renumbering in grey (they were red and green), moved text with the page's
+  faint tint and dotted underline.
+
 ## [0.5.1] - 2026-10-19
 
 ### Changed

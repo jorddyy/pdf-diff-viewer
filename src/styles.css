@@ -16,6 +16,12 @@
   --mv-strong: #6d28d9;
   --ren: rgb(100 116 139 / 0.22);
   --ren-strong: #475467;
+  /* Unselected tints (page highlights and list snippets); the variables above are the selected colours. */
+  --del-soft: rgb(220 38 38 / 0.14);
+  --ins-soft: rgb(22 163 74 / 0.16);
+  --num-soft: rgb(234 138 0 / 0.24);
+  --mv-soft: rgb(124 58 237 / 0.07);
+  --ren-soft: rgb(100 116 139 / 0.12);
   --sel: #2d5bd7;
   --chip: #ecebe7;
   color-scheme: light;
@@ -375,18 +381,18 @@ select {
   white-space: nowrap;
 }
 
-/* Page tints are lighter than the list's; the selected change gets the full colour and
-   the others fade a little so it stands out (Esc clears the selection). */
+/* Light tints; the selected change gets the full colour and the others fade a little so
+   it stands out (Esc clears the selection). The list's snippets use the same tints. */
 .mk.del {
-  background: rgb(220 38 38 / 0.14);
+  background: var(--del-soft);
 }
 
 .mk.ins {
-  background: rgb(22 163 74 / 0.16);
+  background: var(--ins-soft);
 }
 
 .mk.num {
-  background: rgb(234 138 0 / 0.24);
+  background: var(--num-soft);
 }
 
 .mk.del.sel {
@@ -407,14 +413,14 @@ select {
 
 /* Moved, unchanged text: a light tint and dotted underline, not a full highlight. */
 .mk.mv {
-  background: rgb(124 58 237 / 0.07);
+  background: var(--mv-soft);
   border-bottom: 2px dotted var(--mv-strong);
   border-radius: 0;
 }
 
 .mk.ren,
 .mk.toc {
-  background: rgb(100 116 139 / 0.12);
+  background: var(--ren-soft);
 }
 
 .mk.ren.sel,
@@ -598,14 +604,45 @@ select {
   padding: 0 1px;
 }
 
-.snip mark.del {
-  background: var(--del);
+/* Snippet marks take the page's colour for the change (numbers orange, renumbering grey)
+   and its light tint; the selected entry shows the full colour, as on the page. */
+.snip.old mark {
   text-decoration: line-through;
   text-decoration-color: var(--del-strong);
 }
 
+.snip mark.del {
+  background: var(--del-soft);
+}
+
 .snip mark.ins {
+  background: var(--ins-soft);
+}
+
+.snip mark.num {
+  background: var(--num-soft);
+}
+
+.snip mark.ren,
+.snip mark.toc {
+  background: var(--ren-soft);
+}
+
+.chg.sel .snip mark.del {
+  background: var(--del);
+}
+
+.chg.sel .snip mark.ins {
   background: var(--ins);
+}
+
+.chg.sel .snip mark.num {
+  background: var(--num);
+}
+
+.chg.sel .snip mark.ren,
+.chg.sel .snip mark.toc {
+  background: var(--ren);
 }
 
 .empty {
@@ -1296,9 +1333,12 @@ code {
   box-shadow: none;
 }
 
+/* Like moved text on the page: a faint tint and a dotted underline. */
 .moved-text {
   color: var(--text);
   font-style: italic;
+  background: var(--mv-soft);
+  border-bottom: 2px dotted var(--mv-strong);
 }
 
 .pagebox {

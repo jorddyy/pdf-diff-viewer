@@ -46,7 +46,8 @@ Open the page, drop two or more PDFs on it.
 - The change list (left) groups changes by section. Filters: text, numbers
   (only numbers changed, e.g. results), moved text, figures, renumbering
   (figure, table, equation, section and citation numbers; hidden by default)
-  and the table of contents (hidden by default).
+  and the table of contents (hidden by default). Its snippets use the page's
+  colours: light tints, the selected entry in full colour.
 - Click a change in the list to jump to it in both versions, or click a
   highlight on a page to find its entry in the list. The selected change is
   shown in full colour with a bar in the margin, the other highlights fade a

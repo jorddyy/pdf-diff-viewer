@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'preact/hooks';
 import type { Change, Segment } from '../align/align';
 import type { FigureStatus } from '../align/objects';
+import { markClass } from './marks';
 
 export interface Filters {
   text: boolean;
@@ -247,12 +248,12 @@ export function ChangeList({ entries, filters, setFilters, selected, onSelect, r
                   <>
                     {c.kind !== 'insert' && (
                       <div class="snip old">
-                        <Segs segs={c.aSegs} cls="del" />
+                        <Segs segs={c.aSegs} cls={markClass(c, 'a')} />
                       </div>
                     )}
                     {c.kind !== 'delete' && (
                       <div class="snip new">
-                        <Segs segs={c.bSegs} cls="ins" />
+                        <Segs segs={c.bSegs} cls={markClass(c, 'b')} />
                       </div>
                     )}
                   </>
