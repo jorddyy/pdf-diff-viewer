@@ -69,18 +69,29 @@ for (let i = 0; i < 5; i++) {
 }
 check('scrolling A moves B', after[1] - before[1] > 500, `A ${before[0]}→${after[0]}, B ${before[1]}→${after[1]}`);
 check('no jitter after scrolling stops', samples.every((s) => s[0] === after[0] && s[1] === after[1]), JSON.stringify(samples.map((s) => s.map(Math.round))));
+// Either entries on screen are marked and the first is visible in the list, or (no shown
+// change where the scroll landed) the list's top entry is the next change further down.
 const follow = await page.evaluate(() => {
   const list = document.querySelector('.change-list')!;
   const lr = list.getBoundingClientRect();
   const inview = [...document.querySelectorAll<HTMLElement>('.chg.inview')];
   const firstShown = inview[0]?.getBoundingClientRect();
+  const top = [...list.querySelectorAll<HTMLElement>('.chg')].find((e) => e.getBoundingClientRect().top >= lr.top - 1);
   return {
     scroll: Math.round(list.scrollTop),
     pages: inview.map((e) => e.querySelector('.pages')?.textContent?.trim()),
     visibleInList: !!firstShown && firstShown.top >= lr.top - 1 && firstShown.top < lr.bottom,
+    topPage: +(top?.querySelector('.pages')?.textContent?.match(/→\s*p\.(\d+)/)?.[1] ?? NaN),
+    panePage: +(document.querySelectorAll<HTMLInputElement>('.pagebox input')[1]?.value ?? NaN),
   };
 });
-check('the change list follows the PDFs', follow.scroll > 0 && follow.pages.length > 0 && follow.visibleInList, `list at ${follow.scroll}px; on screen: ${follow.pages.slice(0, 3).join(' | ')}`);
+check(
+  'the change list follows the PDFs',
+  follow.scroll > 0 && (follow.pages.length > 0 ? follow.visibleInList : follow.topPage >= follow.panePage),
+  follow.pages.length
+    ? `list at ${follow.scroll}px; on screen: ${follow.pages.slice(0, 3).join(' | ')}`
+    : `list at ${follow.scroll}px; no change on screen (new p.${follow.panePage}), next at p.${follow.topPage}`,
+);
 await shot('v3-after-scroll');
 
 // Landscape page fits the pane.
