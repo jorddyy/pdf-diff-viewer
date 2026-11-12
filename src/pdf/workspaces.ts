@@ -1,6 +1,8 @@
 // Saved comparisons ("workspaces") and the PDFs they use, in IndexedDB. Local
 // to this browser; nothing leaves it. PDFs are stored once per SHA-256.
 
+import { VERSION_SUFFIX } from '../extract/versionLabel';
+
 const DB = 'pdf-diff-workspaces';
 const FILES = 'files';
 const SPACES = 'workspaces';
@@ -120,7 +122,7 @@ export function workspaceTitle(versions: WorkspaceVersion[], left: string | null
   const stem = (n: string) =>
     n
       .replace(/\.pdf$/i, '')
-      .replace(/[-_ ]?v?\d+([._]\d+)*$/i, '')
+      .replace(VERSION_SUFFIX, '')
       .replace(/[-_ ]+$/, '');
   const stems = versions.map((v) => stem(v.name)).filter(Boolean);
   let base = stems[0] ?? 'Comparison';

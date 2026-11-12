@@ -193,9 +193,10 @@ Key decisions (and why):
   words are compared without punctuation (`m(D0K+),` = `m(D0K+).`), one-letter
   tokens ignored.
 - **Version label.** The file name wins over the title page
-  (`resolveLabel` in `app.tsx`); a hint shows when the title page differs
-  (`v1`, `v1.0`, `v1.0.0` count as equal). `DocModel.label` still stores the
-  title-page label, so the extraction cache needs no bump.
+  (`resolveLabel` in `app.tsx`, patterns in `src/extract/versionLabel.ts`:
+  `v3.5`, `v3_5`, `v4r1`); a hint shows when the title page differs
+  (`v1`, `v1.0`, `v1.0.0` count as equal, and so do `v4r1` and `v4.1`). `DocModel.label` stores the
+  title-page label, so a change to its patterns needs an `EXTRACT_VERSION` bump.
 - **Compare dialog** panels use `flex: none`; otherwise several large panels
   are squeezed instead of scrolling.
 

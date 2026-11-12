@@ -8,6 +8,7 @@ import { buildLines } from './lines';
 import { extractGraphics, type OpsTable } from './graphics';
 import { markFootnotes, markHeadersFooters, markObjects, markSections, markToc, type OutlineEntry } from './structure';
 import { NOTE_MARK, normalizeToken } from './normalize';
+import { versionInName, versionOnTitle } from './versionLabel';
 
 export type Progress = (done: number, total: number) => void;
 
@@ -265,10 +266,8 @@ async function readOutline(pdf: PDFDocumentProxy): Promise<OutlineEntry[]> {
 function detectLabel(doc: DocModel, name: string): string {
   for (const l of doc.lines) {
     if (l.page > 0) break;
-    const m = /\b(?:version|draft)\s*v?(\d+(?:\.\d+)*)\b/i.exec(l.text);
-    if (m) return `v${m[1]}`;
+    const v = versionOnTitle(l.text);
+    if (v) return v;
   }
-  const m = /(?:^|[^a-z])v(\d+(?:[._]\d+)*)/i.exec(name);
-  if (m) return `v${m[1].replace('_', '.')}`;
-  return name.replace(/\.pdf$/i, '');
+  return versionInName(name) ?? name.replace(/\.pdf$/i, '');
 }

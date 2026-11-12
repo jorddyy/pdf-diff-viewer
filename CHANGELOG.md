@@ -7,6 +7,10 @@ The running version is shown next to the title in the app (hover for the commit)
 
 ## [Unreleased]
 
+### Fixed
+- Version labels with a release number (`v4r1`, `v4r2`, LHCb style) are read
+  in full from file names and title pages; they showed as `v4 → v4`.
+
 ### Changed
 - The change list uses the page's highlight colours: light tints in the
   snippets and full colour for the selected entry, number changes in orange and

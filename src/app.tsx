@@ -4,6 +4,7 @@ import { extractInBrowser, openForCompare, openForDisplay, sha256, type PageSize
 import { clearCache, getCached, getFigureResults, putCached, putFigureResults, type FigureResult } from './pdf/cache';
 import { alignDocs, type Alignment } from './align/align';
 import type { DocModel } from './extract/types';
+import { sameVersion, versionInName, versionKey } from './extract/versionLabel';
 import { PANE_PAD, PageBox, PaneControl, PdfPane, type InputKind } from './ui/PdfPane';
 import { ChangeList, DEFAULT_FILTERS, FIG_BADGE, badge, changeVisible, entryCategory, type Entry, type Filters, type Follower } from './ui/ChangeList';
 import { ExportDialog, type ExportOptions } from './ui/ExportDialog';
@@ -45,11 +46,6 @@ export interface Version {
 
 let nextId = 1;
 
-function versionInName(name: string): string | null {
-  const m = /(?:^|[^a-z])v(\d+(?:[._]\d+)*)/i.exec(name);
-  return m ? `v${m[1].replace(/_/g, '.')}` : null;
-}
-
 function labelFromName(name: string): string {
   return versionInName(name) ?? name.replace(/\.pdf$/i, '');
 }
@@ -58,14 +54,7 @@ function labelFromName(name: string): string {
 function resolveLabel(name: string, docLabel: string): { label: string; titleLabel: string | null } {
   const fromName = versionInName(name);
   if (!fromName) return { label: docLabel, titleLabel: null };
-  // v1, v1.0 and v1.0.0 are the same version
-  const norm = (l: string) => l.replace(/(\.0+)+$/, '');
-  return { label: fromName, titleLabel: /^v\d/.test(docLabel) && norm(docLabel) !== norm(fromName) ? docLabel : null };
-}
-
-function versionKey(label: string): number[] {
-  const m = /(\d+(?:\.\d+)*)/.exec(label);
-  return m ? m[1].split('.').map(Number) : [Infinity];
+  return { label: fromName, titleLabel: /^v\d/.test(docLabel) && !sameVersion(docLabel, fromName) ? docLabel : null };
 }
 
 function sortVersions(vs: Version[]): Version[] {
