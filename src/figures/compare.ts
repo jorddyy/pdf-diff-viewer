@@ -1,3 +1,4 @@
+import { pageJob } from '../pdf/pageRendering';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { Rect } from '../extract/types';
 
@@ -331,7 +332,16 @@ export async function renderRegions(pdf: PDFDocumentProxy, pageIndex: number, re
   const canvas = document.createElement('canvas');
   canvas.width = Math.ceil(viewport.width);
   canvas.height = Math.ceil(viewport.height);
-  await page.render({ canvas, viewport }).promise;
+  // Separate PDF workers still draw on the same browser thread as the panes.
+  const job = pageJob(null);
+  try {
+    await new Promise<void>((resolve) => job.enqueue(resolve));
+    const task = page.render({ canvas, viewport });
+    task.onContinue = job.enqueue;
+    await task.promise;
+  } finally {
+    job.finish();
+  }
   return rects.map((r) => {
     const w = Math.max(1, r[2] - r[0]);
     const h = Math.max(1, r[3] - r[1]);

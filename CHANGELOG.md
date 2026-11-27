@@ -12,6 +12,9 @@ The running version is shown next to the title in the app (hover for the commit)
   in full from file names and title pages; they showed as `v4 → v4`.
 
 ### Changed
+- Visible pages in both panes take priority during scrolling and paint
+  progressively on first visit. Recent pages can reuse a cached preview or
+  the full bitmap of a slow page.
 - The change list uses the page's highlight colours: light tints in the
   snippets and full colour for the selected entry, number changes in orange and
   renumbering in grey (they were red and green), moved text with the page's

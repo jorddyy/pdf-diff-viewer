@@ -39,6 +39,10 @@ reload brings back where you were, and the start page lists recent
 comparisons. Figure comparisons are remembered too, so reopening a comparison
 does not render every figure again. "Clear stored data" on the start page removes everything.
 
+While scrolling, both panes prioritise visible pages. On a first visit the
+page draws progressively. A memory cache keeps recently viewed pages available
+as previews and reuses slow pages at full resolution when they fit.
+
 ## Using it
 
 Open the page, drop two or more PDFs on it.

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { TextLayer, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist';
 import type { Mark } from './marks';
 import type { Rect } from '../extract/types';
+import { getPreview, pageJob, paneScrolled, releaseDocumentPreviews, rememberPreview } from '../pdf/pageRendering';
 import type { Pos } from './sync';
 
 /** Vertical space between pages; the page number sits in it. */
@@ -128,6 +129,7 @@ export function PdfPane({ pdf, pages, scale, maxWidth, marks, selected, control,
   });
   control.tops = tops;
   control.scales = scales;
+  useEffect(() => () => releaseDocumentPreviews(pdf.loadingTask.docId), [pdf]);
   const frame = useRef(0);
   const elRef = useRef<HTMLDivElement | null>(null);
   const [canBack, setCanBack] = useState(control.history.length > 0);
@@ -157,6 +159,7 @@ export function PdfPane({ pdf, pages, scale, maxWidth, marks, selected, control,
         elRef.current = el;
       }}
       onScroll={() => {
+        paneScrolled();
         cancelAnimationFrame(frame.current);
         frame.current = requestAnimationFrame(() => {
           control.notify();
@@ -259,7 +262,9 @@ async function resolveDest(pdf: PDFDocumentProxy, dest: unknown): Promise<Pos | 
 
 function PageView({ pdf, index, width, height, scale, marks, selected, onMarkClick, onNavigate }: PageProps) {
   const ref = useRef<HTMLDivElement>(null);
-  const canvas = useRef<HTMLCanvasElement>(null);
+  const bitmap = useRef<HTMLDivElement>(null);
+  const expensive = useRef(false);
+  const completed = useRef<HTMLCanvasElement | null>(null);
   const textRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   const [hover, setHover] = useState<Mark | null>(null);
@@ -277,19 +282,38 @@ function PageView({ pdf, index, width, height, scale, marks, selected, onMarkCli
   }, []);
 
   useEffect(() => {
-    const c = canvas.current!;
+    const host = bitmap.current!;
     const textDiv = textRef.current!;
+    const key = pdf.loadingTask.docId + '/' + index;
+    if (host.dataset.page !== key) {
+      host.replaceChildren();
+      textDiv.replaceChildren();
+      completed.current = null;
+      host.dataset.page = key;
+      setLinks((previous) => previous.length ? [] : previous);
+    }
     if (!visible) {
       // Free the bitmap and text of pages far out of view.
-      c.width = 0;
-      c.height = 0;
+      if (completed.current) rememberPreview(key, completed.current, expensive.current);
+      completed.current = null;
+      host.replaceChildren();
       textDiv.replaceChildren();
       return;
     }
     let task: RenderTask | null = null;
     let text: TextLayer | null = null;
     let cancelled = false;
-    (async () => {
+    const job = pageJob(ref.current!);
+    const surface = document.createElement('canvas');
+    const preview = !host.firstChild && getPreview(key);
+    if (preview) {
+      const copy = document.createElement('canvas');
+      copy.width = preview.width;
+      copy.height = preview.height;
+      copy.getContext('2d')!.drawImage(preview, 0, 0);
+      host.replaceChildren(copy);
+    }
+    const render = async () => {
       const page = await pdf.getPage(index + 1);
       if (cancelled) return;
       page
@@ -309,20 +333,27 @@ function PageView({ pdf, index, width, height, scale, marks, selected, onMarkCli
         .catch(() => {});
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const viewport = page.getViewport({ scale: scale * dpr });
-      const off = document.createElement('canvas');
-      off.width = Math.floor(viewport.width);
-      off.height = Math.floor(viewport.height);
-      task = page.render({ canvas: off, viewport });
-      try {
+      const w = Math.floor(viewport.width);
+      const h = Math.floor(viewport.height);
+      const shown = host.firstChild as HTMLCanvasElement | null;
+      if (shown && shown.width === w && shown.height === h) {
+        completed.current = shown;
+      } else {
+        surface.width = w;
+        surface.height = h;
+        // Paint progressively on first visit. Preserve a preview or the previous
+        // zoom level until its sharp replacement is ready.
+        if (!shown) host.append(surface);
+        const started = performance.now();
+        task = page.render({ canvas: surface, viewport });
+        task.onContinue = job.enqueue;
         await task.promise;
-      } catch {
-        return;
+        if (cancelled) return;
+        if (surface.parentNode !== host) host.replaceChildren(surface);
+        expensive.current = performance.now() - started > 750;
+        completed.current = surface;
       }
-      if (cancelled) return;
-      // Swap in the finished bitmap to avoid a blank flash while zooming.
-      c.width = off.width;
-      c.height = off.height;
-      c.getContext('2d')!.drawImage(off, 0, 0);
+      job.finish();
       // Selectable text (also makes the browser's find work on the PDF).
       textDiv.replaceChildren();
       textDiv.style.setProperty('--total-scale-factor', String(scale));
@@ -333,9 +364,16 @@ function PageView({ pdf, index, width, height, scale, marks, selected, onMarkCli
       } catch {
         // Cancelled.
       }
-    })();
+    };
+    job.enqueue(() => {
+      void render().catch((error) => {
+        if (!cancelled) console.warn('Page rendering failed', error);
+      }).finally(job.finish);
+    });
     return () => {
       cancelled = true;
+      job.finish();
+      if (surface.parentNode === host && completed.current !== surface) surface.remove();
       task?.cancel();
       text?.cancel();
     };
@@ -432,7 +470,7 @@ function PageView({ pdf, index, width, height, scale, marks, selected, onMarkCli
         if (m) onMarkClick(m.key);
       }}
     >
-      <canvas ref={canvas} />
+      <div ref={bitmap} />
       <div class="overlay">
         {marks?.map((m, k) => (
           <div

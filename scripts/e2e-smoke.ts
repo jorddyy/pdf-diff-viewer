@@ -181,6 +181,19 @@ try {
     return text.includes('amber') && text.includes('cobalt') && text.includes('Number');
   }, { timeout: 90_000 });
   await page.waitForFunction(() => document.querySelectorAll('.page .textLayer span').length > 0);
+  // Scroll far enough to release the first page, then revisit and zoom.
+  const firstPage = '.col:first-child .pane .page:first-child';
+  await page.waitForSelector(firstPage + ' .textLayer span');
+  await page.$eval('.pane', (pane) => { pane.scrollTop = pane.scrollHeight; });
+  await page.waitForFunction((selector) => !document.querySelector(selector)?.querySelector('canvas'), {}, firstPage);
+  await page.$eval('.pane', (pane) => { pane.scrollTop = 0; });
+  await page.waitForSelector(firstPage + ' .textLayer span');
+  const widthBefore = await page.$eval(firstPage + ' canvas', (c) => (c as HTMLCanvasElement).width);
+  await page.click('button[title="Zoom in"]');
+  await page.waitForFunction((selector, width) =>
+    (document.querySelector<HTMLCanvasElement>(selector + ' canvas')?.width ?? 0) > width, {}, firstPage, widthBefore);
+  await page.click('button[title="Fit page width"]');
+  console.log('PASS an evicted page restores selectable text and redraws at the new zoom');
   assert.equal(await page.$$eval('.vchip.err', (es) => es.length), 0);
   assert.equal(await page.$$eval('.vchip', (es) => es.length), 2);
   console.log('PASS a failed PDF can be retried without duplicate versions');
