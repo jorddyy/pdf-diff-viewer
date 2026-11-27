@@ -149,6 +149,11 @@ Key decisions (and why):
 - **Workers must be classic (IIFE).** `vite.config.ts` sets
   `worker.format: 'iife'`; module workers from blob URLs fail when the build is
   opened via `file://` in Chromium.
+- **`disableFontFace: true`** (`load.ts`). With pdf.js FontFaces, every
+  embedded font added to `document.fonts` made Firefox reflow the whole
+  document (both text layers and the change list), 0.2–0.5 s per font while
+  a plot page drew. Glyphs as paths draw equally fast, and Firefox kept
+  coloured link text black with FontFaces. The text layer is unaffected.
 - **Standard fonts on `file://`.** `standard_fonts/` fetches are disabled there
   (CORS); pdf.js then uses system fonts.
 - **Bump `EXTRACT_VERSION` in `src/pdf/cache.ts`** whenever extraction output

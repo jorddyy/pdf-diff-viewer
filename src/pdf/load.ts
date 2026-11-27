@@ -16,7 +16,9 @@ function startDocument(bytes: ArrayBuffer) {
   const port = new PdfjsWorker();
   const worker = new pdfjs.PDFWorker({ port } as any);
   try {
-    const task = pdfjs.getDocument({ data: new Uint8Array(bytes.slice(0)), worker, verbosity: 0, standardFontDataUrl });
+    // Glyphs are drawn as paths: each font registered as a FontFace makes
+    // Firefox lay out the whole page again, and plots embed many fonts.
+    const task = pdfjs.getDocument({ data: new Uint8Array(bytes.slice(0)), worker, verbosity: 0, standardFontDataUrl, disableFontFace: true });
     const destroy = task.destroy.bind(task);
     let cleanup: Promise<void> | undefined;
     // pdf.js does not own an explicitly supplied worker or its browser port.

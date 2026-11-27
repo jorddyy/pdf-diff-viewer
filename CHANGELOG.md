@@ -10,6 +10,9 @@ The running version is shown next to the title in the app (hover for the commit)
 ### Fixed
 - Version labels with a release number (`v4r1`, `v4r2`, LHCb style) are read
   in full from file names and title pages; they showed as `v4 → v4`.
+- Scrolling to a page with many plots no longer stutters in Firefox. Each
+  font embedded in a plot made the browser lay out the whole page again.
+  Text in coloured links (hyperref) also keeps its colour on the page.
 
 ### Changed
 - Visible pages in both panes take priority during scrolling and paint

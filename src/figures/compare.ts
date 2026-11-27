@@ -262,7 +262,7 @@ export function panelDiff(a: Raster, b: Raster): { diff: number; differs: boolea
 const SCALED_NOISE = 0.02;
 
 /** Bump when rendering, registration or the ink comparison changes, so cached figure results are ignored. */
-export const COMPARE_VERSION = 2;
+export const COMPARE_VERSION = 3;
 
 /** Threshold above which a figure panel is reported as changed. */
 export const CHANGED_THRESHOLD = 0.01;
