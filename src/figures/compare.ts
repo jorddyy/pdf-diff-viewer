@@ -8,16 +8,38 @@ export interface Raster {
   height: number;
 }
 
-/** Render a page region to a canvas whose width is `width` pixels. */
-export async function renderRegionToCanvas(pdf: PDFDocumentProxy, pageIndex: number, rect: Rect, width: number): Promise<HTMLCanvasElement> {
+/**
+ * Several regions of one page, each as a canvas `width` pixels wide, cut from a
+ * single render of the area they cover. pdf.js executes the whole page for
+ * every render, so one render per panel made many-panel figures very slow.
+ */
+export async function renderRegionsToCanvases(pdf: PDFDocumentProxy, pageIndex: number, rects: Rect[], width: number): Promise<HTMLCanvasElement[]> {
   const page = await pdf.getPage(pageIndex + 1);
-  const s = width / Math.max(1, rect[2] - rect[0]);
-  const viewport = page.getViewport({ scale: s });
+  const x0 = Math.min(...rects.map((r) => r[0]));
+  const y0 = Math.min(...rects.map((r) => r[1]));
+  const x1 = Math.max(...rects.map((r) => r[2]));
+  const y1 = Math.max(...rects.map((r) => r[3]));
+  const minW = Math.min(...rects.map((r) => Math.max(1, r[2] - r[0])));
+  // Sharp at `width` for the narrowest panel, within a sane canvas size.
+  const s = Math.min(width / minW, Math.sqrt(24e6 / Math.max(1, (x1 - x0) * (y1 - y0))));
   const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round((rect[2] - rect[0]) * s));
-  canvas.height = Math.max(1, Math.round((rect[3] - rect[1]) * s));
-  await page.render({ canvas, viewport, transform: [1, 0, 0, 1, -rect[0] * s, -rect[1] * s] }).promise;
-  return canvas;
+  canvas.width = Math.max(1, Math.ceil((x1 - x0) * s));
+  canvas.height = Math.max(1, Math.ceil((y1 - y0) * s));
+  await page.render({ canvas, viewport: page.getViewport({ scale: s }), transform: [1, 0, 0, 1, -x0 * s, -y0 * s] }).promise;
+  const out = rects.map((r) => {
+    const w = Math.max(1, r[2] - r[0]);
+    const h = Math.max(1, r[3] - r[1]);
+    const c = document.createElement('canvas');
+    c.width = width;
+    c.height = Math.max(1, Math.round((h * width) / w));
+    const ctx = c.getContext('2d')!;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(canvas, (r[0] - x0) * s, (r[1] - y0) * s, w * s, h * s, 0, 0, c.width, c.height);
+    return c;
+  });
+  canvas.width = canvas.height = 0;
+  return out;
 }
 
 export function rasterOf(canvas: HTMLCanvasElement): Raster {
@@ -172,7 +194,7 @@ const SCALES = [0.9, 0.93, 0.96, 1.04, 1.07, 1.1];
  * scale (a cropped or resized plot). A scale is only used when it clearly beats
  * the plain shift, so identical figures are never "improved" into a match.
  */
-export function register(la: Float32Array, wa: number, ha: number, lb: Float32Array, wb: number, hb: number): { l: Float32Array; scaled: boolean; warp: (l: Float32Array) => Float32Array } {
+export function register(la: Float32Array, wa: number, ha: number, lb: Float32Array, wb: number, hb: number): { l: Float32Array; scaled: boolean; warp: (l: Float32Array) => Float32Array; sx: number; sy: number; scale: number } {
   let src = lb;
   let scale = 1;
   const [, , base] = searchShift(la, wa, ha, lb, wb, hb, 0.04, true);
@@ -194,20 +216,56 @@ export function register(la: Float32Array, wa: number, ha: number, lb: Float32Ar
     if (bestS !== 1) for (const step of [0.015, 0.007, 0.003]) for (const s of [bestS - step, bestS + step]) tryScale(s);
   }
   const [sx, sy] = bestShift(la, wa, ha, src, wb, hb);
-  const shift = (l: Float32Array) => {
-    const out = new Float32Array(wa * ha);
-    for (let y = 0; y < ha; y++) {
-      for (let x = 0; x < wa; x++) {
-        const xb = x + sx;
-        const yb = y + sy;
-        out[y * wa + x] = xb < 0 || yb < 0 || xb >= wb || yb >= hb ? 255 : l[yb * wb + xb];
-      }
-    }
-    return out;
-  };
+  const shift = (l: Float32Array) => shiftImage(l, wb, hb, wa, ha, sx, sy);
   // The same transform for any other image of b (its colour channels).
   const warp = (l: Float32Array) => shift(scale === 1 ? l : scaleAbout(l, wb, hb, scale));
-  return { l: shift(src), scaled: src !== lb, warp };
+  return { l: shift(src), scaled: src !== lb, warp, sx, sy, scale };
+}
+
+/** `l` (wb × hb) moved by (sx, sy) onto a wa × ha grid, white outside. */
+function shiftImage(l: Float32Array, wb: number, hb: number, wa: number, ha: number, sx: number, sy: number): Float32Array {
+  const out = new Float32Array(wa * ha);
+  for (let y = 0; y < ha; y++) {
+    for (let x = 0; x < wa; x++) {
+      const xb = x + sx;
+      const yb = y + sy;
+      out[y * wa + x] = xb < 0 || yb < 0 || xb >= wb || yb >= hb ? 255 : l[yb * wb + xb];
+    }
+  }
+  return out;
+}
+
+/**
+ * `register` for large images (the compare dialog): the search runs at about
+ * 240 px like the figure comparison, then the shift is refined by ±2 px at
+ * each doubling of the resolution. A full-size search took ~1 s per panel.
+ */
+function registerLarge(la: Float32Array, wa: number, ha: number, lb: Float32Array, wb: number, hb: number): Float32Array {
+  const k = 2 ** Math.ceil(Math.log2(Math.max(wa, wb) / 240));
+  if (k <= 1) return register(la, wa, ha, lb, wb, hb).l;
+  const [sa, swa, sha] = downsample(la, wa, ha, k);
+  const [sb, swb, shb] = downsample(lb, wb, hb, k);
+  const r = register(sa, swa, sha, sb, swb, shb);
+  const src = r.scale === 1 ? lb : scaleAbout(lb, wb, hb, r.scale);
+  let [bx, by] = [r.sx, r.sy];
+  for (let f = k / 2; f >= 1; f /= 2) {
+    const [ga, gwa, gha] = f > 1 ? downsample(la, wa, ha, f) : [la, wa, ha];
+    const [gb, gwb, ghb] = f > 1 ? downsample(src, wb, hb, f) : [src, wb, hb];
+    const step = Math.max(1, Math.floor(Math.max(gwa, gha) / 400));
+    const [cx, cy] = [bx * 2, by * 2];
+    [bx, by] = [cx, cy];
+    let best = shiftCost(ga, gb, gwa, gha, gwb, ghb, cx, cy, step);
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const c = shiftCost(ga, gb, gwa, gha, gwb, ghb, cx + dx, cy + dy, step);
+        if (c < best - 0.01) {
+          best = c;
+          [bx, by] = [cx + dx, cy + dy];
+        }
+      }
+    }
+  }
+  return shiftImage(src, wb, hb, wa, ha, bx, by);
 }
 
 /**
@@ -301,7 +359,7 @@ export function diffImage(a: Raster, b: Raster): ImageData {
   const w = a.width;
   const h = a.height;
   const la = channel(a);
-  const lb = register(la, a.width, a.height, channel(b), b.width, b.height).l;
+  const lb = registerLarge(la, a.width, a.height, channel(b), b.width, b.height);
   const out = new ImageData(w, h);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {

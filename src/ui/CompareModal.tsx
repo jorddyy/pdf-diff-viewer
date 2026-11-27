@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { Rect } from '../extract/types';
-import { diffImage, rasterOf, renderRegionToCanvas } from '../figures/compare';
+import { diffImage, rasterOf, renderRegionsToCanvases, type Raster } from '../figures/compare';
+import DiffWorker from '../figures/diffWorker?worker&inline';
 
 export interface RegionRef {
   pdf: PDFDocumentProxy;
@@ -35,8 +36,64 @@ const MODES: [Mode, string][] = [
   ['swipe', 'Swipe'],
 ];
 
+/** A panel's canvas; panels of one page share a single render. */
+type Panels = (side: 'a' | 'b', ref: RegionRef) => Promise<HTMLCanvasElement>;
+
+function urlOf(canvas: HTMLCanvasElement): Promise<string> {
+  // toBlob encodes off the main thread, unlike toDataURL.
+  return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob ? URL.createObjectURL(blob) : canvas.toDataURL())));
+}
+
+type Differ = ((a: Raster, b: Raster) => Promise<ImageData>) & { stop: () => void };
+
+/** Difference images from a few workers; on the main thread if none starts. */
+function differ(): Differ {
+  const size = Math.max(1, Math.min(3, (navigator.hardwareConcurrency || 2) - 2));
+  const workers: Worker[] = [];
+  const waiting = new Map<number, { resolve: (d: ImageData) => void; reject: (e: Error) => void }>();
+  let next = 0;
+  const onmessage = (e: MessageEvent<{ id: number; data?: Uint8ClampedArray<ArrayBuffer>; width: number; height: number; error?: string }>) => {
+    const w = waiting.get(e.data.id);
+    waiting.delete(e.data.id);
+    if (e.data.data) w?.resolve(new ImageData(e.data.data, e.data.width, e.data.height));
+    else w?.reject(new Error(e.data.error));
+  };
+  const run = (a: Raster, b: Raster) => {
+    const id = next++;
+    let worker = workers[id % size];
+    if (!worker) {
+      try {
+        worker = new DiffWorker();
+        worker.onmessage = onmessage;
+        workers[id % size] = worker;
+      } catch {
+        return new Promise<ImageData>((resolve) => setTimeout(() => resolve(diffImage(a, b))));
+      }
+    }
+    worker.postMessage({ id, a, b }, [a.data.buffer, b.data.buffer]);
+    return new Promise<ImageData>((resolve, reject) => waiting.set(id, { resolve, reject }));
+  };
+  return Object.assign(run, { stop: () => workers.forEach((w) => w.terminate()) });
+}
+
 export function CompareModal({ req, onClose }: { req: CompareRequest; onClose: () => void }) {
   const [mode, setMode] = useState<Mode>('side');
+  const diffs = useMemo(differ, []);
+  useEffect(() => () => diffs.stop(), [diffs]);
+  const panels = useMemo<Panels>(() => {
+    const width = Math.min(760, Math.floor((window.innerWidth - 120) / 2) * 2);
+    const pages = new Map<string, Promise<HTMLCanvasElement[]>>();
+    return (side, ref) => {
+      const group = req.pairs.flatMap((p) => {
+        const r = p[side];
+        return r && r.pdf === ref.pdf && r.page === ref.page ? [r] : [];
+      });
+      const key = `${side}${ref.page}`;
+      let job = pages.get(key);
+      if (!job) pages.set(key, (job = renderRegionsToCanvases(ref.pdf, ref.page, group.map((r) => r.rect), width)));
+      return job.then((cs) => cs[group.indexOf(ref)]);
+    };
+  }, [req]);
   const [showSame, setShowSame] = useState(false);
   // Blink, difference and swipe need both versions of a panel.
   const comparable = req.pairs.some((p) => p.a && p.b);
@@ -75,7 +132,7 @@ export function CompareModal({ req, onClose }: { req: CompareRequest; onClose: (
         {/* Focused so that arrow keys and Page Down scroll the panels. */}
         <div class="modal-body" tabIndex={-1} ref={dialog}>
           {shown.map((p, i) => (
-            <PairView key={i} pair={p} mode={mode} aLabel={req.aLabel} bLabel={req.bLabel} />
+            <PairView key={i} pair={p} panels={panels} diffs={diffs} mode={mode} aLabel={req.aLabel} bLabel={req.bLabel} />
           ))}
           {same.length > 0 && !showSame && (
             <button class="btn" onClick={() => setShowSame(true)}>
@@ -89,38 +146,58 @@ export function CompareModal({ req, onClose }: { req: CompareRequest; onClose: (
 }
 
 interface Rendered {
+  ca: HTMLCanvasElement | null;
+  cb: HTMLCanvasElement | null;
   a: string | null;
   b: string | null;
-  diff: string | null;
   width: number;
 }
 
-function PairView({ pair, mode, aLabel, bLabel }: { pair: ComparePair; mode: Mode; aLabel: string; bLabel: string }) {
+function PairView({ pair, panels, diffs, mode, aLabel, bLabel }: { pair: ComparePair; panels: Panels; diffs: Differ; mode: Mode; aLabel: string; bLabel: string }) {
   const [img, setImg] = useState<Rendered | null>(null);
+  const [diff, setDiff] = useState<string | null>(null);
   const [blinkB, setBlinkB] = useState(false);
   const [swipe, setSwipe] = useState(50);
 
   useEffect(() => {
     let cancelled = false;
-    const width = Math.min(760, Math.floor((window.innerWidth - 120) / 2) * 2);
+    const urls: string[] = [];
     (async () => {
-      const ca = pair.a ? await renderRegionToCanvas(pair.a.pdf, pair.a.page, pair.a.rect, width) : null;
-      const cb = pair.b ? await renderRegionToCanvas(pair.b.pdf, pair.b.page, pair.b.rect, width) : null;
-      let diff: string | null = null;
-      if (ca && cb) {
-        const d = diffImage(rasterOf(ca), rasterOf(cb));
+      const [ca, cb] = await Promise.all([pair.a ? panels('a', pair.a) : null, pair.b ? panels('b', pair.b) : null]);
+      const [a, b] = await Promise.all([ca && urlOf(ca), cb && urlOf(cb)]);
+      for (const u of [a, b]) if (u) urls.push(u);
+      if (cancelled) return;
+      setImg({ ca, cb, a, b, width: (ca ?? cb)?.width ?? 0 });
+    })().catch((error) => console.warn('Panel rendering failed', error));
+    return () => {
+      cancelled = true;
+      urls.forEach((u) => URL.revokeObjectURL(u));
+    };
+  }, [pair, panels]);
+
+  // The difference image needs a registration search: only on request.
+  useEffect(() => {
+    if (mode !== 'diff' || !img?.ca || !img.cb || diff) return;
+    let cancelled = false;
+    const { ca, cb } = img;
+    diffs(rasterOf(ca), rasterOf(cb))
+      .then((d) => {
+        if (cancelled) return null;
         const c = document.createElement('canvas');
         c.width = d.width;
         c.height = d.height;
         c.getContext('2d')!.putImageData(d, 0, 0);
-        diff = c.toDataURL();
-      }
-      if (!cancelled) setImg({ a: ca?.toDataURL() ?? null, b: cb?.toDataURL() ?? null, diff, width });
-    })();
+        return urlOf(c);
+      })
+      .then((url) => {
+        if (url && !cancelled) setDiff(url);
+        else if (url) URL.revokeObjectURL(url);
+      }, (error) => console.warn('Difference image failed', error));
     return () => {
       cancelled = true;
     };
-  }, [pair]);
+  }, [mode, img, diff]);
+  useEffect(() => () => { if (diff) URL.revokeObjectURL(diff); }, [diff]);
 
   useEffect(() => {
     if (mode !== 'blink') return;
@@ -163,7 +240,7 @@ function PairView({ pair, mode, aLabel, bLabel }: { pair: ComparePair; mode: Mod
           <div class="tag">
             <span class="legend old">only in {aLabel}</span> <span class="legend new">only in {bLabel}</span>
           </div>
-          <img src={img.diff!} alt={`Difference of ${pair.label}`} />
+          {diff ? <img src={diff} alt={`Difference of ${pair.label}`} /> : <div class="missing">Computing the difference…</div>}
         </div>
       )}
       {effective === 'swipe' && (

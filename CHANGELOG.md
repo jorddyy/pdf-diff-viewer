@@ -12,7 +12,9 @@ The running version is shown next to the title in the app (hover for the commit)
   in full from file names and title pages; they showed as `v4 → v4`.
 - Scrolling to a page with many plots no longer stutters in Firefox. Each
   font embedded in a plot made the browser lay out the whole page again.
-  Text in coloured links (hyperref) also keeps its colour on the page.
+- The figure compare dialog opens much faster and no longer freezes the
+  browser: each page is drawn once for all its panels, and difference images
+  are computed in the background only when Difference is chosen.
 
 ### Changed
 - Visible pages in both panes take priority during scrolling and paint
